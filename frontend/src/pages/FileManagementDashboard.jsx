@@ -6,6 +6,7 @@ import TopBarControls from "../components/TopBarControls";
 import BusinessDoodleBg from "../components/BusinessDoodleBg";
 import RequestOversightGrid from "../components/RequestOversightGrid";
 import DepartmentDashboard from "../components/DepartmentDashboard";
+import DateRangeFilter from "../components/DateRangeFilter";
 import PasswordInput from "../components/PasswordInput";
 import { formatDate } from "../utils/formatDate";
 import { REASONS, reasonI18nKey } from "../utils/leavingReason";
@@ -83,6 +84,8 @@ export default function FileManagementDashboard() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const [employeeFullName, setEmployeeFullName] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
@@ -98,13 +101,16 @@ export default function FileManagementDashboard() {
   const [submitSuccess, setSubmitSuccess] = useState("");
 
   async function loadRequests() {
-    const { data } = await client.get("/requests");
+    const { data } = await client.get("/requests", { params: { from: dateFrom, to: dateTo } });
     setRequests(data);
     setLoading(false);
   }
 
   useEffect(() => {
     loadRequests();
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => {
     client.get("/departments").then(({ data }) => setDepartments(data));
   }, []);
 
@@ -342,6 +348,8 @@ export default function FileManagementDashboard() {
 
         {tab === "list" && (
           <>
+            <DateRangeFilter from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
+
             {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
             {!loading && requests.length === 0 && (
               <p className="dashboard-status-message">{t("fileManagement.empty")}</p>

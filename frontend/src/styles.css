@@ -1145,6 +1145,29 @@ p {
   background-color: var(--indigo-100);
 }
 
+/* ---------- Date range filter ---------- */
+
+.date-range-filter {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.date-range-filter .form-group {
+  margin-bottom: 0;
+}
+
+.date-range-filter input {
+  min-width: 150px;
+}
+
+.date-range-clear {
+  height: fit-content;
+  padding: 0.75rem 1rem;
+}
+
 /* ---------- Request cards (reviewer request grid) ---------- */
 
 .requests-section {

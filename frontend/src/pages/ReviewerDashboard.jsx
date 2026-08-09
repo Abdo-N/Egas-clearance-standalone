@@ -8,6 +8,7 @@ import SignaturePanel from "../components/SignaturePanel";
 import PasswordInput from "../components/PasswordInput";
 import RequestOversightGrid from "../components/RequestOversightGrid";
 import DepartmentDashboard from "../components/DepartmentDashboard";
+import DateRangeFilter from "../components/DateRangeFilter";
 import { formatDate } from "../utils/formatDate";
 import { reasonI18nKey } from "../utils/leavingReason";
 import logoUrl from "../assets/egas-logo.png";
@@ -87,12 +88,14 @@ export default function ReviewerDashboard() {
   const [signing, setSigning] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const isOversight = Boolean(user.hasOversightDashboard);
   const isIT = user.departmentKey === "it";
 
   async function reload(keepId) {
-    const { data } = await client.get("/requests");
+    const { data } = await client.get("/requests", { params: { from: dateFrom, to: dateTo } });
     setRequests(data);
     setLoading(false);
     setSelectedId(keepId && data.some((r) => r._id === keepId) ? keepId : null);
@@ -100,7 +103,7 @@ export default function ReviewerDashboard() {
 
   useEffect(() => {
     reload();
-  }, []);
+  }, [dateFrom, dateTo]);
 
   const selected = requests.find((r) => r._id === selectedId);
   const myDept = selected?.departments.find((d) => d.departmentKey === user.departmentKey);
@@ -209,6 +212,8 @@ export default function ReviewerDashboard() {
 
         {!selected && (
           <>
+            <DateRangeFilter from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
+
             {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
             {!loading && requests.length === 0 && (
               <p className="dashboard-status-message">{t("reviewer.empty")}</p>

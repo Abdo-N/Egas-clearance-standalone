@@ -175,6 +175,9 @@
     "showPassword": "Show password",
     "hidePassword": "Hide password",
     "brandSubtitle": "Employee Clearance System",
-    "logoAlt": "EGAS"
+    "logoAlt": "EGAS",
+    "dateRangeFrom": "From",
+    "dateRangeTo": "To",
+    "dateRangeClear": "Clear dates"
   }
 }

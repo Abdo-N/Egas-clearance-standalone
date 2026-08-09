@@ -175,6 +175,9 @@
     "showPassword": "إظهار كلمة المرور",
     "hidePassword": "إخفاء كلمة المرور",
     "brandSubtitle": "منظومة إخلاء طرف الموظفين",
-    "logoAlt": "إيجاس"
+    "logoAlt": "إيجاس",
+    "dateRangeFrom": "من",
+    "dateRangeTo": "إلى",
+    "dateRangeClear": "مسح التواريخ"
   }
 }
