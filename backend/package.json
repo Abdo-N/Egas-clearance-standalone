@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "seed": "node src/seed/seed.js"
+    "seed:dev": "node src/seed/seed.js",
+    "seed:final": "node src/seed/seedDepartments.js"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.3",

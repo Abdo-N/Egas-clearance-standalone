@@ -168,8 +168,11 @@ JWT_EXPIRES_IN=8h
 Seed the reference data, demo accounts, signatures, and demo requests:
 
 ```bash
-npm run seed --prefix backend
+npm run seed:dev --prefix backend
 ```
+
+For a real deployment with no demo data, use `npm run seed:final --prefix backend`
+instead — it upserts only the 13 real departments.
 
 Start the frontend and backend together:
 
@@ -289,7 +292,10 @@ npm run dev --prefix frontend
 npm run build --prefix frontend
 
 # Reapply the deterministic demo seed
-npm run seed --prefix backend
+npm run seed:dev --prefix backend
+
+# Seed only the real departments (no demo data) -- for real deployments
+npm run seed:final --prefix backend
 
 # Optional destructive/manual workflow test against a running seeded server
 node backend/scripts/smoke-test.js

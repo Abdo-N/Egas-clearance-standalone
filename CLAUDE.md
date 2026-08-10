@@ -304,7 +304,7 @@ Backend:
 cd backend
 npm install
 cp .env.example .env     # then point MONGO_URI at your local MongoDB
-npm run seed              # upserts demo/reference data and replaces 2 fixed demo requests
+npm run seed:dev           # upserts demo/reference data and replaces 2 fixed demo requests
 npm run dev                # nodemon, http://localhost:4000
 node scripts/smoke-test.js # exercises the full flow, registering its own throwaway accounts
 ```
@@ -316,11 +316,17 @@ npm install
 npm run dev   # http://localhost:5173, proxies /api to localhost:4000
 ```
 
-`npm run seed` upserts a deterministic demo account set and replaces the two
-fixed demo requests without deleting unrelated registered accounts/requests.
+`npm run seed:dev` upserts a deterministic demo account set and replaces the
+two fixed demo requests without deleting unrelated registered accounts/requests.
 All demo accounts use `DemoPassw0rd!`; see
 `backend/src/seed/demo-users.data.js` for the complete login list. New accounts
 can still be created at `/register`.
+
+For a real (non-demo) deployment, run `npm run seed:final` instead — it
+upserts only the 13 real departments (`backend/src/seed/upsertDepartments.js`,
+shared with `seed:dev`) and creates no demo accounts, requests, or evidence
+files. See "self-registered accounts, no AD" above: after `seed:final`,
+everyone who needs access registers their own real account at `/register`.
 
 ## Working conventions for this repo
 

@@ -8,6 +8,7 @@ const Department = require("../models/Department");
 const User = require("../models/User");
 const ClearanceRequest = require("../models/ClearanceRequest");
 const departments = require("./departments.data");
+const upsertDepartments = require("./upsertDepartments");
 const { DEMO_PASSWORD, demoUsers } = require("./demo-users.data");
 
 const UPLOAD_ROOT = path.resolve(__dirname, "../../uploads");
@@ -198,15 +199,7 @@ async function run() {
   await connectDB();
 
   console.log(`[seed] upserting ${departments.length} departments...`);
-  await Department.bulkWrite(
-    departments.map((department) => ({
-      updateOne: {
-        filter: { key: department.key },
-        update: { $set: department },
-        upsert: true,
-      },
-    }))
-  );
+  await upsertDepartments();
 
   console.log(`[seed] upserting ${demoUsers.length} demo accounts...`);
   await upsertDemoUsers();

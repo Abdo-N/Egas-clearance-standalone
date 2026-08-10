@@ -2,7 +2,7 @@
  * Manual end-to-end smoke test for the revamped clearance flow.
  *
  * Requires a running local MongoDB and the server already started
- * (npm run seed && npm run dev in another terminal), then:
+ * (npm run seed:dev && npm run dev in another terminal), then:
  *   node scripts/smoke-test.js
  *
  * Exercises the real rules:
