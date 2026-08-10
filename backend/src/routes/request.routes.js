@@ -71,25 +71,17 @@ function isDepartmentUnlocked(departments, deptKey) {
   return departments.filter((d) => d.tier < dept.tier).every((d) => d.status === "completed");
 }
 
-// Optional `?from=YYYY-MM-DD&to=YYYY-MM-DD` on the list route, filtered on
-// `createdAt` (the date already shown as "requested on" in every list view).
-// `to` is inclusive of the whole day. Both ends are optional so a caller can
-// bound just one side. Invalid dates are ignored rather than rejected --
-// this is a convenience filter, not user input that needs validating.
-function buildDateRangeFilter(req) {
-  const filter = {};
-  if (req.query.from) {
-    const from = new Date(req.query.from);
-    if (!Number.isNaN(from.getTime())) filter.$gte = from;
-  }
-  if (req.query.to) {
-    const to = new Date(req.query.to);
-    if (!Number.isNaN(to.getTime())) {
-      to.setHours(23, 59, 59, 999);
-      filter.$lte = to;
-    }
-  }
-  return Object.keys(filter).length > 0 ? { createdAt: filter } : {};
+// Optional `?employeeNumber=...` on the list route -- lets File Management
+// and reviewers find a specific employee's request(s) instead of scrolling
+// unbounded request history. Partial, case-insensitive match (not exact) so
+// a caller can search without knowing the full number; regex metacharacters
+// are escaped since this becomes part of a Mongo regex, not treated as a
+// pattern itself.
+function buildEmployeeNumberFilter(req) {
+  const employeeNumber = req.query.employeeNumber?.trim();
+  if (!employeeNumber) return {};
+  const escaped = employeeNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return { employeeNumber: { $regex: escaped, $options: "i" } };
 }
 
 // Only wages/finance (hasOversightDashboard, embedded in the JWT at login
@@ -322,21 +314,21 @@ router.post("/", requireAuth, requireRole("file_management"), asyncHandler(async
  * what's currently pending.
  */
 router.get("/", requireAuth, requireRole("file_management", "reviewer"), asyncHandler(async (req, res) => {
-  const dateFilter = buildDateRangeFilter(req);
+  const searchFilter = buildEmployeeNumberFilter(req);
 
   if (canSeeFull(req.user)) {
-    const all = await ClearanceRequest.find(dateFilter).sort({ createdAt: -1 });
+    const all = await ClearanceRequest.find(searchFilter).sort({ createdAt: -1 });
     return res.json(all.map((r) => withOwnDepartmentAnnotated(r, req.user)));
   }
 
   if (req.user.role === "file_management") {
-    const all = await ClearanceRequest.find(dateFilter).sort({ createdAt: -1 });
+    const all = await ClearanceRequest.find(searchFilter).sort({ createdAt: -1 });
     return res.json(all.map(summarizeForFileManagement));
   }
 
   const mine = await ClearanceRequest.find({
     "departments.departmentKey": req.user.departmentKey,
-    ...dateFilter,
+    ...searchFilter,
   }).sort({ createdAt: -1 });
 
   const visible = mine.filter((r) => {

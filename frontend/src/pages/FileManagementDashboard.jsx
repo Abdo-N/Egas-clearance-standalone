@@ -6,10 +6,11 @@ import TopBarControls from "../components/TopBarControls";
 import BusinessDoodleBg from "../components/BusinessDoodleBg";
 import RequestOversightGrid from "../components/RequestOversightGrid";
 import DepartmentDashboard from "../components/DepartmentDashboard";
-import DateRangeFilter from "../components/DateRangeFilter";
+import EmployeeNumberFilter from "../components/EmployeeNumberFilter";
 import PasswordInput from "../components/PasswordInput";
 import { formatDate } from "../utils/formatDate";
 import { REASONS, reasonI18nKey } from "../utils/leavingReason";
+import { JOB_TITLES } from "../jobTitles";
 import logoUrl from "../assets/egas-logo.png";
 
 function todayIsoDate() {
@@ -84,8 +85,7 @@ export default function FileManagementDashboard() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [employeeNumberSearch, setEmployeeNumberSearch] = useState("");
 
   const [employeeFullName, setEmployeeFullName] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
@@ -101,14 +101,14 @@ export default function FileManagementDashboard() {
   const [submitSuccess, setSubmitSuccess] = useState("");
 
   async function loadRequests() {
-    const { data } = await client.get("/requests", { params: { from: dateFrom, to: dateTo } });
+    const { data } = await client.get("/requests", { params: { employeeNumber: employeeNumberSearch } });
     setRequests(data);
     setLoading(false);
   }
 
   useEffect(() => {
     loadRequests();
-  }, [dateFrom, dateTo]);
+  }, [employeeNumberSearch]);
 
   useEffect(() => {
     client.get("/departments").then(({ data }) => setDepartments(data));
@@ -279,9 +279,16 @@ export default function FileManagementDashboard() {
                 <input
                   id="employeeJobTitle"
                   type="text"
+                  list="jobTitlesList"
+                  autoComplete="off"
                   value={employeeJobTitle}
                   onChange={(e) => setEmployeeJobTitle(e.target.value)}
                 />
+                <datalist id="jobTitlesList">
+                  {JOB_TITLES.map((title) => (
+                    <option key={title} value={title} />
+                  ))}
+                </datalist>
               </div>
 
               <div className="form-group">
@@ -348,7 +355,7 @@ export default function FileManagementDashboard() {
 
         {tab === "list" && (
           <>
-            <DateRangeFilter from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
+            <EmployeeNumberFilter value={employeeNumberSearch} onChange={setEmployeeNumberSearch} />
 
             {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
             {!loading && requests.length === 0 && (
@@ -361,6 +368,7 @@ export default function FileManagementDashboard() {
                   <thead>
                     <tr>
                       <th>{t("reviewer.employee")}</th>
+                      <th>{t("fileManagement.jobTitleLabel")}</th>
                       <th>{t("employee.reasonLabel")}</th>
                       <th>{t("employee.lastWorkingDayLabel")}</th>
                       <th>{t("employee.statusLabel")}</th>
@@ -375,6 +383,7 @@ export default function FileManagementDashboard() {
                           <td>
                             {r.employeeFullName} <small>#{r.employeeNumber}</small>
                           </td>
+                          <td>{r.employeeJobTitle || "—"}</td>
                           <td>{t(`employee.${reasonI18nKey(r.reason)}`)}</td>
                           <td>{formatDate(r.lastWorkingDay, i18n.language)}</td>
                           <td>
@@ -395,6 +404,10 @@ export default function FileManagementDashboard() {
                   {selected.employeeFullName} · #{selected.employeeNumber}
                 </h3>
 
+                <div className="detail-row">
+                  <span>{t("fileManagement.jobTitleLabel")}</span>
+                  <strong>{selected.employeeJobTitle || "—"}</strong>
+                </div>
                 <div className="detail-row">
                   <span>{t("employee.reasonLabel")}</span>
                   <strong>{t(`employee.${reasonI18nKey(selected.reason)}`)}</strong>

@@ -3,10 +3,10 @@ import { useTranslation } from "react-i18next";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useTheme } from "../context/ThemeContext";
 import { formatDate } from "../utils/formatDate";
-import { reasonI18nKey } from "../utils/leavingReason";
+import { REASONS, reasonI18nKey } from "../utils/leavingReason";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
-const REASON_KEYS = ["resignation", "new_job", "retirement"];
+const REASON_KEYS = REASONS;
 const OVERDUE_DAYS = 7;
 const RECENT_LIMIT = 8;
 const TOP_EMPLOYEE_DEPTS = 8;

@@ -1,7 +1,7 @@
 # Project Status
 
-Last updated: 2026-08-09 (request lists now support a "requested on"
-date-range filter, by Nader + Claude).
+Last updated: 2026-08-10 (request lists now support searching by employee
+number instead of a "requested on" date range, by Nader + Claude).
 Update this file whenever a task moves — don't let it go stale.
 
 ## Done
@@ -685,22 +685,26 @@ Update this file whenever a task moves — don't let it go stale.
       itemized IT item (phone) -- each reviewer's own panel now shows their
       thumbnail right next to the signed banner/confirmation.
 - [x] **Added a "requested on" date-range filter to every request list
-      (2026-08-09).** `GET /requests` previously ran an unbounded
+      (2026-08-09), then replaced it with an employee-number search
+      (2026-08-10).** `GET /requests` previously ran an unbounded
       `ClearanceRequest.find()` for all three visibility branches (oversight,
       File Management, per-department reviewer) -- fine for demo data, but
       request history only grows over time and there was no way to narrow it
-      down. Added optional `?from=&to=` query params, filtered on `createdAt`
-      (`buildDateRangeFilter()` in `request.routes.js`, applied before the
+      down. The date-range filter solved that but wasn't how people actually
+      look a request up -- they know the employee's number, not when it was
+      filed -- so it's now an optional `?employeeNumber=` query param, a
+      partial case-insensitive regex match on `employeeNumber`
+      (`buildEmployeeNumberFilter()` in `request.routes.js`, regex
+      metacharacters escaped since it's user input; applied before the
       existing role-based redaction/summarization so it works identically for
-      all three branches; `to` is inclusive of the whole day; invalid/missing
-      dates are just ignored, not rejected). New shared
-      `frontend/src/components/DateRangeFilter.jsx` (two date inputs + a
-      clear button) wired into both `ReviewerDashboard.jsx` (own dashboard
-      and oversight) and `FileManagementDashboard.jsx`'s request-list tab;
-      each dashboard re-fetches whenever the range changes. Deliberately did
-      not add pagination alongside this -- date range alone solves "find an
-      old request without scrolling forever," and pagination can wait until
-      volume actually justifies it.
+      all three branches). New shared
+      `frontend/src/components/EmployeeNumberFilter.jsx` (one text input + a
+      clear button, replacing the old two-date-input `DateRangeFilter.jsx`)
+      wired into both `ReviewerDashboard.jsx` (own dashboard and oversight)
+      and `FileManagementDashboard.jsx`'s request-list tab; each dashboard
+      re-fetches whenever the search value changes. Still deliberately no
+      pagination -- searching by employee number solves "find a specific old
+      request without scrolling forever" the same way the date range did.
 
 ## Team update
 

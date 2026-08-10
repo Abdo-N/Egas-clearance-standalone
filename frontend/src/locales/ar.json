@@ -62,6 +62,7 @@
     "reasonResignation": "استقالة",
     "reasonNewJob": "الانتقال إلى شركة أخرى",
     "reasonRetirement": "المعاش",
+    "reasonEarlyRetirement": "معاش مبكر",
     "lastWorkingDayLabel": "تاريخ آخر يوم عمل المقترح",
     "submitting": "جاري التقديم...",
     "statusLabel": "الحالة العامة",
@@ -83,7 +84,7 @@
     "departmentLockedTitle": "في انتظار الأقسام السابقة",
     "departmentLockedBody": "لا يمكن التعامل مع هذا القسم بعد -- يجب أن تنتهي جميع أقسام المرحلة السابقة أولاً.",
     "signatureFor": "توقيع",
-    "requestInfoDepartment": "القسم",
+    "requestInfoDepartment": "النيابة / المساعدة",
     "requestInfoReason": "سبب المغادرة",
     "requestInfoLastDay": "تاريخ آخر يوم عمل المقترح",
     "requestInfoSubmitted": "تاريخ التقديم",
@@ -154,9 +155,9 @@
     "approvedNote": "تمت الموافقة -- في انتظار قسم تقنية المعلومات لتعطيل صلاحيات هذا الموظف.",
     "employeeNumberLabel": "الرقم الوظيفي",
     "fullNameLabel": "الاسم بالكامل",
-    "jobTitleLabel": "المسمى الوظيفي",
-    "departmentLabel": "القسم",
-    "departmentPlaceholder": "اختر القسم",
+    "jobTitleLabel": "الوظيفة",
+    "departmentLabel": "النيابة / المساعدة",
+    "departmentPlaceholder": "اختر النيابة / المساعدة",
     "cancel": "إلغاء"
   },
   "common": {
@@ -176,8 +177,8 @@
     "hidePassword": "إخفاء كلمة المرور",
     "brandSubtitle": "منظومة إخلاء طرف الموظفين",
     "logoAlt": "إيجاس",
-    "dateRangeFrom": "من",
-    "dateRangeTo": "إلى",
-    "dateRangeClear": "مسح التواريخ"
+    "employeeNumberSearchLabel": "البحث بالرقم الوظيفي",
+    "employeeNumberSearchPlaceholder": "ابحث عن طلب برقم الموظف",
+    "employeeNumberSearchClear": "مسح البحث"
   }
 }

@@ -8,7 +8,7 @@ import SignaturePanel from "../components/SignaturePanel";
 import PasswordInput from "../components/PasswordInput";
 import RequestOversightGrid from "../components/RequestOversightGrid";
 import DepartmentDashboard from "../components/DepartmentDashboard";
-import DateRangeFilter from "../components/DateRangeFilter";
+import EmployeeNumberFilter from "../components/EmployeeNumberFilter";
 import { formatDate } from "../utils/formatDate";
 import { reasonI18nKey } from "../utils/leavingReason";
 import logoUrl from "../assets/egas-logo.png";
@@ -88,14 +88,13 @@ export default function ReviewerDashboard() {
   const [signing, setSigning] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [undoing, setUndoing] = useState(false);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [employeeNumberSearch, setEmployeeNumberSearch] = useState("");
 
   const isOversight = Boolean(user.hasOversightDashboard);
   const isIT = user.departmentKey === "it";
 
   async function reload(keepId) {
-    const { data } = await client.get("/requests", { params: { from: dateFrom, to: dateTo } });
+    const { data } = await client.get("/requests", { params: { employeeNumber: employeeNumberSearch } });
     setRequests(data);
     setLoading(false);
     setSelectedId(keepId && data.some((r) => r._id === keepId) ? keepId : null);
@@ -103,7 +102,7 @@ export default function ReviewerDashboard() {
 
   useEffect(() => {
     reload();
-  }, [dateFrom, dateTo]);
+  }, [employeeNumberSearch]);
 
   const selected = requests.find((r) => r._id === selectedId);
   const myDept = selected?.departments.find((d) => d.departmentKey === user.departmentKey);
@@ -212,7 +211,7 @@ export default function ReviewerDashboard() {
 
         {!selected && (
           <>
-            <DateRangeFilter from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
+            <EmployeeNumberFilter value={employeeNumberSearch} onChange={setEmployeeNumberSearch} />
 
             {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
             {!loading && requests.length === 0 && (
@@ -280,6 +279,10 @@ export default function ReviewerDashboard() {
             <section className="detail-panel" style={{ marginTop: 16 }}>
               <h3>{selected.employeeFullName}</h3>
 
+              <div className="detail-row">
+                <span>{t("fileManagement.jobTitleLabel")}</span>
+                <strong>{selected.employeeJobTitle || "—"}</strong>
+              </div>
               <div className="detail-row">
                 <span>{t("reviewer.requestInfoDepartment")}</span>
                 <strong>{isAr ? selected.employeeDepartment_ar : selected.employeeDepartment_en}</strong>

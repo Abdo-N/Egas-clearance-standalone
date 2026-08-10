@@ -62,6 +62,7 @@
     "reasonResignation": "Resignation",
     "reasonNewJob": "Moving to a new company",
     "reasonRetirement": "Retirement (age 60)",
+    "reasonEarlyRetirement": "Early retirement",
     "lastWorkingDayLabel": "Suggested last working day",
     "submitting": "Submitting...",
     "statusLabel": "Overall status",
@@ -83,7 +84,7 @@
     "departmentLockedTitle": "Waiting on earlier departments",
     "departmentLockedBody": "This department can't be actioned yet -- every department in an earlier tier must complete first.",
     "signatureFor": "Signature for",
-    "requestInfoDepartment": "Department",
+    "requestInfoDepartment": "Directorate / Assistant Directorate",
     "requestInfoReason": "Reason for leaving",
     "requestInfoLastDay": "Suggested last working day",
     "requestInfoSubmitted": "Submitted on",
@@ -155,8 +156,8 @@
     "employeeNumberLabel": "Employee number",
     "fullNameLabel": "Full name",
     "jobTitleLabel": "Job title",
-    "departmentLabel": "Department",
-    "departmentPlaceholder": "Select department",
+    "departmentLabel": "Directorate / Assistant Directorate",
+    "departmentPlaceholder": "Select directorate / assistant directorate",
     "cancel": "Cancel"
   },
   "common": {
@@ -176,8 +177,8 @@
     "hidePassword": "Hide password",
     "brandSubtitle": "Employee Clearance System",
     "logoAlt": "EGAS",
-    "dateRangeFrom": "From",
-    "dateRangeTo": "To",
-    "dateRangeClear": "Clear dates"
+    "employeeNumberSearchLabel": "Search by employee number",
+    "employeeNumberSearchPlaceholder": "Search for a request by employee number",
+    "employeeNumberSearchClear": "Clear search"
   }
 }

@@ -1145,9 +1145,9 @@ p {
   background-color: var(--indigo-100);
 }
 
-/* ---------- Date range filter ---------- */
+/* ---------- Employee number filter ---------- */
 
-.date-range-filter {
+.employee-number-filter {
   display: flex;
   align-items: flex-end;
   gap: 14px;
@@ -1155,15 +1155,15 @@ p {
   margin-bottom: 18px;
 }
 
-.date-range-filter .form-group {
+.employee-number-filter .form-group {
   margin-bottom: 0;
 }
 
-.date-range-filter input {
-  min-width: 150px;
+.employee-number-filter input {
+  min-width: 220px;
 }
 
-.date-range-clear {
+.employee-number-clear {
   height: fit-content;
   padding: 0.75rem 1rem;
 }

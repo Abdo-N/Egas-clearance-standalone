@@ -60,8 +60,9 @@ const requestDepartmentSchema = new mongoose.Schema(
 );
 
 // Why the employee is leaving. "retirement" covers Egypt's mandatory
-// retirement-at-60 policy, referred to as "المعاش".
-const LEAVING_REASONS = ["resignation", "new_job", "retirement"];
+// retirement-at-60 policy, referred to as "المعاش". "early_retirement"
+// ("معاش مبكر") is a separate, voluntary early-exit option.
+const LEAVING_REASONS = ["resignation", "new_job", "retirement", "early_retirement"];
 
 const clearanceRequestSchema = new mongoose.Schema(
   {
