@@ -107,9 +107,15 @@ form (see "What's on a clearance request" below). There used to be a mock
 Once every one of the 13 departments has signed (see point 5 below for why
 that's still not the same as "completed"), any of IT's 5 reviewers can
 trigger `POST /:id/revoke-access` (re-authenticates with their own password,
-no file) which sets `accessRevoked: true` on the request. This is a
-placeholder for the "temporary database" design mentioned in the original
-brief — a real design pass on that is still needed, see PROJECT_STATUS.md.
+no file) which sets `accessRevoked: true` on the request. This app is a
+coordination bridge between File Management and the other departments, not a
+system of record for Active Directory itself — it never actually disables
+anything. IT does the real revocation elsewhere and this route just records
+that they've told File Management it's done. The "temporary database" idea
+floated in the original brief was considered and dropped (2026-08-10,
+Nader): there's no separate archival/deletion step for cleared employees'
+data, the `accessRevoked`/`status: "completed"` flags on the request ARE the
+final design, not a placeholder.
 
 ## The most important business rules
 
@@ -258,10 +264,11 @@ portion of it (an A4 PDF export being the common shape here) would scale
 down to an illegible sliver once the page's own empty margin has to shrink
 along with it to fit the signature cell; cropping first means only the
 signature itself gets sized to fill the cell, regardless of how much blank
-page surrounds it in the original upload. webp evidence (accepted on
-upload, see the multer `fileFilter` in `request.routes.js`) is the one gap
-left — still stored/servable via `GET /requests/:id/evidence/...`, just not
-composited, since the decode step only handles png/jpeg/pdf.
+page surrounds it in the original upload. Evidence uploads are restricted to
+jpg/png/pdf (see the multer `fileFilter` in `request.routes.js`) — webp was
+dropped from the allowlist (2026-08-10) rather than adding a fourth decoder,
+since real usage is always a phone photo or an exported/scanned PDF and webp
+wasn't expected to ever actually show up.
 `GET /requests/:id/pdf` generates this on demand — a partial preview while
 in progress, the final artifact once `status === "completed"`.
 
@@ -327,6 +334,14 @@ upserts only the 13 real departments (`backend/src/seed/upsertDepartments.js`,
 shared with `seed:dev`) and creates no demo accounts, requests, or evidence
 files. See "self-registered accounts, no AD" above: after `seed:final`,
 everyone who needs access registers their own real account at `/register`.
+
+**Deployment target (decided 2026-08-10):** a company-controlled Windows
+Server running a local MongoDB instance, not the shared Atlas dev cluster
+used during development — `MONGO_URI` in `.env` needs to point at that local
+instance at deploy time. Given the small trusted user base and internal-only
+network, this repo deliberately has no CI pipeline, rate limiting, or
+automated test suite beyond `scripts/smoke-test.js` — that's judged
+sufficient for a single hand-deployed instance, not a gap to fill later.
 
 ## Working conventions for this repo
 

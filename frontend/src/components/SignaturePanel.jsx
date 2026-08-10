@@ -69,7 +69,7 @@ function SignForm({ onSubmit, busy, t }) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp,application/pdf"
+          accept="image/jpeg,image/png,application/pdf"
           onChange={(e) => setFile(e.target.files[0] || null)}
           required
         />

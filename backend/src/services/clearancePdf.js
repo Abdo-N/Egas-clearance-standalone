@@ -193,10 +193,9 @@ function stripNearWhiteBackground({ width, height, data }) {
 
 // Decodes whatever evidence format was uploaded to raw RGBA pixels so it can
 // all go through the same stripNearWhiteBackground -> embedPng pipeline
-// below, regardless of source format. webp is accepted on upload (see the
-// multer fileFilter in request.routes.js) and stays servable via
-// GET .../evidence, but isn't handled here -- not worth a 4th decoder for
-// what should be a rare upload choice next to a photo or PDF.
+// below, regardless of source format. Only jpg/png/pdf are accepted on
+// upload (see the multer fileFilter in request.routes.js), so those are the
+// only formats this needs to handle.
 async function decodeEvidenceToRgba(bytes, mimeType) {
   if (/^application\/pdf$/i.test(mimeType)) return rasterizePdfPage(bytes);
   if (/png/i.test(mimeType)) {

@@ -1,7 +1,9 @@
 # Project Status
 
-Last updated: 2026-08-10 (request lists now support searching by employee
-number instead of a "requested on" date range, by Nader + Claude).
+Last updated: 2026-08-10 (webp dropped from accepted evidence formats; three
+long-open design questions resolved and closed out — no AD/LDAP integration
+ever, no separate "temporary database" archival step, deployment target is a
+company Windows Server + local MongoDB — by Nader + Claude).
 Update this file whenever a task moves — don't let it go stale.
 
 ## Done
@@ -743,11 +745,17 @@ that was fixed.
       Nobody on the team has real EGAS LDAP credentials yet (per the July 31
       kickoff conversation). See `CLAUDE.md` "mock Active Directory" for
       exactly what changes when this becomes available.
-- [ ] **"Temporary database" design for post-AD-deletion employees.** The
-      brief explicitly flags this as a later design decision. Current stopgap:
-      flip `archivedFromAD: true` on the `Employee` record instead of actually
-      deleting it. Needs a real design pass once the team has bandwidth.
-- [ ] **Hosting/deployment target.** Not yet decided — local dev only so far.
+- [x] ~~"Temporary database" design for post-revocation employees.~~ Resolved
+      (2026-08-10, Nader): this system is a coordination bridge between File
+      Management and the other departments, not a system of record for AD
+      itself -- it doesn't need to actually delete/archive anything. Flipping
+      `accessRevoked: true` (and `status` becoming `"completed"`) once IT
+      confirms they've done the real revocation elsewhere IS the final
+      design, not a placeholder. No separate archival mechanism needed.
+- [x] ~~Hosting/deployment target.~~ Resolved (2026-08-10, Nader): a Windows
+      Server the company controls, with a local MongoDB instance (not the
+      shared Atlas dev cluster) -- see `.env`'s `MONGO_URI` for what needs to
+      change at deploy time.
 - [x] ~~PDF row coordinates are hand-calibrated against one scanned copy of
       the paper form.~~ Resolved 2026-08-04: EGAS provided a cleaner source
       (see "New paper-form template..." above) and `clearancePdf.js`'s
@@ -757,12 +765,13 @@ that was fixed.
 
 ## Open questions for Nader to raise with whoever assigned this project
 
-- Is there a real AD/LDAP test environment the team could get read-only access
-  to, even a sandboxed one? (Now needed for both staff accounts AND the
-  employee directory.)
 - Who ends up owning the "manager vs. staff sign-off" question — is that
   actually part of scope, or out of scope for v1?
 - Is 2 reviewer accounts per department (so either can sign) actually enough
   coverage in practice, or do some departments need more?
-- Should a PDF upload (not just a photo) actually get embedded in the
-  composited form eventually, or is the text placeholder fine long-term?
+
+~~Is there a real AD/LDAP test environment...~~ and ~~should a PDF upload
+get embedded in the composited form...~~ removed 2026-08-10 — both resolved:
+no AD/LDAP integration is ever planned (see "Blocked" above), and PDF
+evidence has been rasterized and composited (not a text placeholder) since
+2026-08-04, see "PDF-uploaded evidence now actually composites" above.

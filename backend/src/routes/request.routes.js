@@ -31,9 +31,9 @@ const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    const allowed = ["image/jpeg", "image/png", "application/pdf"];
     if (!allowed.includes(file.mimetype)) {
-      return cb(new Error("Evidence must be a JPG/PNG/WEBP photo or a PDF"));
+      return cb(new Error("Evidence must be a JPG/PNG photo or a PDF"));
     }
     cb(null, true);
   },
