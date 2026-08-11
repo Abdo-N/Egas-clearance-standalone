@@ -30,6 +30,7 @@ const requestItemSchema = new mongoose.Schema(
     status: { type: String, enum: ["pending", "completed"], default: "pending" },
     signedByUserID: { type: String, default: null },
     signedByFullName: { type: String, default: null },
+    signedByLandlineNumber: { type: String, default: null },
     signedAt: { type: Date, default: null },
     evidence: { type: evidenceSchema, default: null },
   },
@@ -51,8 +52,16 @@ const requestDepartmentSchema = new mongoose.Schema(
     // Single-mode fields (unused when signatureMode === "itemized"):
     signedByUserID: { type: String, default: null },
     signedByFullName: { type: String, default: null },
+    signedByLandlineNumber: { type: String, default: null },
     signedAt: { type: Date, default: null },
     evidence: { type: evidenceSchema, default: null },
+    // Optional free-text remark, submitted alongside the signature on
+    // POST .../sign (single-mode only, see request.routes.js) -- only ever
+    // populated for hasOversightDashboard departments (Wages, Finance) since
+    // that's the only pair the frontend shows the field for and the only
+    // pair clearancePdf.js has a box position for. Never required, so most
+    // requests/departments leave this "".
+    notes: { type: String, default: "" },
     // Itemized-mode fields (IT only):
     items: { type: [requestItemSchema], default: [] },
   },
@@ -61,8 +70,24 @@ const requestDepartmentSchema = new mongoose.Schema(
 
 // Why the employee is leaving. "retirement" covers Egypt's mandatory
 // retirement-at-60 policy, referred to as "المعاش". "early_retirement"
-// ("معاش مبكر") is a separate, voluntary early-exit option.
-const LEAVING_REASONS = ["resignation", "new_job", "retirement", "early_retirement"];
+// ("معاش مبكر") is a separate, voluntary early-exit option. Full list
+// (2026-08-11) matches HR's real leaving-reason categories -- see
+// frontend/src/utils/leavingReason.js for the matching i18n keys/order.
+const LEAVING_REASONS = [
+  "death",
+  "retirement",
+  "early_retirement",
+  "dismissal",
+  "resignation",
+  "secondment_end",
+  "delegation_end",
+  "assignment_end",
+  "sister_company_transfer",
+  "new_job",
+  "driver_contract_end",
+  "fixed_term_contract_end",
+  "comprehensive_bonus_contract_end",
+];
 
 const clearanceRequestSchema = new mongoose.Schema(
   {

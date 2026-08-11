@@ -8,7 +8,9 @@ and what's still open. TASKS.md is a historical sprint plan from before the
 ## What this project is
 
 Digitizing EGAS's paper-based employee clearance ("إخلاء طرف") process. When an
-employee retires or resigns, **File Management (إدارة الملفات)** files a
+employee retires or resigns, **File Management (`role: "file_management"`,
+displayed to users as "إدارة الوثائق و السجلات" / "Document and Records
+Management" — renamed 2026-08-11, the internal role key is unchanged)** files a
 clearance request on their behalf — the employee never logs in. Each of the 13
 departments on the paper form then reviews and signs off on that employee.
 Departments 1–11 sign in parallel; the last two (Wages, Financial Affairs) are
@@ -93,10 +95,34 @@ Management or as a reviewer for any department. `departmentKey`/
 registration form can populate its department/item pickers before the person
 has a token yet). Login is by email + password (`userID` is still the
 underlying field name on `User`, just holds an email now instead of an
-AD-style username — see the comment in `User.js`). Every other file just
-receives a JWT with `{ userID, fullName, role, departmentKey,
-assignedItemKey, hasOversightDashboard }` and doesn't care how the account
-was created.
+AD-style username — see the comment in `User.js`). Registration also
+requires a `landlineNumber` (company internal/extension line, "رقم الهاتف
+الداخلي") for every role, not just reviewers — this isn't an integrity rule
+like the IT item check, just a required field, enforced in the route rather
+than the schema so seed data can still create accounts directly. Every other
+file just receives a JWT with `{ userID, fullName, role, departmentKey,
+assignedItemKey, landlineNumber, hasOversightDashboard, mustResetPassword }`
+and doesn't care how the account was created.
+
+**Forgotten passwords are IT-assisted, not self-service** (2026-08-11,
+Nader) — there's no email infrastructure in this app to send a reset link
+through, and it's a small enough internal team that this doesn't need one.
+Any of IT's 5 reviewers can issue ANY account (another IT reviewer, a plain
+department reviewer, or File Management) a one-time password via
+`POST /auth/reset-password`, re-authenticating with their own password first
+(same re-auth-to-confirm pattern used everywhere else). The plaintext
+one-time password is returned once, for IT to hand off directly (phone call,
+in person) — never emailed, never stored anywhere but the account's
+(temporary) `passwordHash`. That account's `mustResetPassword` flips to
+`true`, which `requireAuth` (`backend/src/middleware/auth.middleware.js`)
+enforces server-side, not just cosmetically: a token minted from a one-time
+password can hit exactly one route, `POST /auth/set-new-password` (re-auth
+with the one-time password, pick a real one), until that succeeds. So a
+locked-out person actually knows who to ask, the login page has a "Forgot
+your password?" disclosure listing every IT reviewer's name, email, and
+landline, backed by `GET /auth/it-contacts` — deliberately public/no-auth,
+same "public by necessity" reasoning as `GET /api/departments`, since
+someone locked out by definition has no token yet.
 
 Employees being cleared never log in and are not stored anywhere ahead of
 time — File Management types their data directly into the create-request
@@ -183,24 +209,29 @@ ONLY there:
      the JWT at login so route logic never hardcodes those two keys) get the
      full, un-redacted request — every department's status, signer, and
      evidence — via `canSeeFull()`.
-   - File Management gets neither of the above reviewer views. Every File
-     Management account sees the same organizational request queue, while
-     `createdByUserID` remains an audit field recording who filed it. They get
-     a high-level summary
-     (`summarizeForFileManagement()`: department status only, never signer
-     identity or timestamps). The one deliberate exception is evidence
-     itself: a department's uploaded photo/file is included the moment that
-     department's own `status` is `"completed"`, same as oversight sees it —
-     not gated on File Management's own approval below. This is what lets
-     File Management actually spot an illegible signature and reopen it (see
-     the `.../reopen` and `.../items/:itemKey/reopen` routes — password
-     re-auth, resets that department/item back to `"pending"`, clears its
-     evidence, and revokes `fileManagementApproved` if it had already been
-     given) before approving the clearance, not just after. They can also
-     preview/download the composited PDF for any request once every
-     department has signed (`allDepartmentsSigned()`, same condition as
-     below — not gated on `status === "completed"`, which would make it
-     unreachable until after IT's own final step).
+   - File Management gets neither of the above reviewer views, but as of
+     2026-08-11 its curated shape (`summarizeForFileManagement()`) carries
+     the same signer detail oversight sees: name, sign date, email
+     (`signedByUserID`), and landline (`signedByLandlineNumber`) per
+     department/item, so File Management can actually contact a reviewer
+     about a problem signature instead of just seeing that "something" is
+     signed. Every File Management account sees the same organizational
+     request queue, while `createdByUserID` remains an audit field recording
+     who filed it. The one remaining structural difference from oversight is
+     shape, not information: `summarizeForFileManagement()` still hand-picks
+     fields onto a curated object rather than returning the raw department
+     array `withOwnDepartmentAnnotated()` does. Evidence itself is included
+     the moment a department's own `status` is `"completed"`, same as
+     oversight sees it — not gated on File Management's own approval below.
+     This is what lets File Management actually spot an illegible signature
+     and reopen it (see the `.../reopen` and `.../items/:itemKey/reopen`
+     routes — password re-auth, resets that department/item back to
+     `"pending"`, clears its evidence, and revokes `fileManagementApproved`
+     if it had already been given) before approving the clearance, not just
+     after. They can also preview/download the composited PDF for any
+     request once every department has signed (`allDepartmentsSigned()`,
+     same condition as below — not gated on `status === "completed"`, which
+     would make it unreachable until after IT's own final step).
 5. **"Revoke access" is the real final step, not a formality after the
    fact — `request.status` only becomes `"completed"` once IT has done it.**
    This is a general rule, not IT-specific busywork: an employee being "fully
@@ -227,7 +258,37 @@ ONLY there:
    conditions true) and `awaitingFileManagementApproval` (signed but not yet
    approved) — computed from the full departments array before redaction — so IT's
    "Revoke access" button knows when to appear without ever being told which
-   specific other departments are done.
+   specific other departments are done. IT's OWN `needsAction` flag
+   (`redactToOwnDepartment()`) has a second OR-branch for this too
+   (`itAwaitingRevocation`, 2026-08-11): once IT's own item/department is
+   signed, the generic `isPendingForReviewer()` check flips to false even
+   though the revoke-access action is still outstanding and isn't tied to any
+   one reviewer's assigned item — without the extra branch, a fully-signed,
+   FM-approved request quietly reads as "already handled" and drops off IT's
+   own dashboard instead of showing as something to act on.
+   User-facing wording split (2026-08-11, Nader): IT's own revoke-access
+   button/hint/busy-label/banner and their own request-list badge for this
+   state are worded around "Active Directory" specifically (`reviewer.
+   revokeAccessButton` etc., blue `.status-pill.awaiting-ad`) since that's IT's
+   actual real-world action; everyone else (File Management's approve step,
+   oversight's badges, the shared `RequestOversightGrid` banner) keeps the
+   original generic "access/permissions" wording — same underlying
+   `readyForAccessRevocation`/`accessRevoked` fields throughout, this is
+   presentation-only, scoped to strings that were already exclusively
+   IT-facing.
+6. **File Management can permanently delete a FULLY COMPLETED request,
+   irreversibly** (`POST /:id/delete`, requires `status === "completed"`,
+   2026-08-11) — e.g. the employee came back to the company after already
+   being fully cleared and access-revoked, and the record shouldn't keep
+   reading as "completed" for someone actively working again. This is for
+   reverting a finalized clearance decision specifically, not a general
+   "cancel any request" tool — a request still mid-flight (signed but not
+   yet fully revoked) can't be deleted this way, only reopened. Real hard
+   delete: the MongoDB document AND its `backend/uploads/<requestId>/`
+   evidence directory are both removed, no soft-delete/archive flag anywhere
+   in this schema, no undo. Password re-auth like every other consequential
+   action here; any File Management account, not just the request's
+   creator, same rule as reopen.
 
 If you need to change any of this logic, it lives in exactly one place. Don't
 duplicate it in the frontend beyond the UX hints in `SignaturePanel.jsx`
@@ -272,12 +333,39 @@ wasn't expected to ever actually show up.
 `GET /requests/:id/pdf` generates this on demand — a partial preview while
 in progress, the final artifact once `status === "completed"`.
 
+The paper form actually has a third column per row, "البيان" (statement),
+to the right of "التوقيع" — until 2026-08-11 deliberately left blank; every
+signed row now gets a fixed "خالي الطرف" stamp there so the form reads as
+complete rather than leaving that cell empty next to a real signature.
+`COLUMNS.statement` was derived the same way as `name`/`signature` (render
+the template at 300 DPI, find the vertical grid lines flanking it — see the
+coordinate-derivation comment at the top of `clearancePdf.js`). This needed
+an actual Arabic-capable font: `StandardFonts.Helvetica` (used for the
+"الاسم" column) has no Arabic glyphs at all, and pdf-lib's standard-font
+text-drawing path doesn't shape Arabic contextual letterforms even where a
+font does have the glyphs. `backend/assets/cairo-arabic.ttf` — the same
+Cairo family the frontend uses, decompressed once from
+`frontend/public/fonts/cairo-var-arabic.woff2` via the `wawoff2` package
+(pdf-lib/fontkit couldn't parse the woff2 container directly for embedding,
+even though fontkit reads it fine for other purposes) — embedded through
+`@pdf-lib/fontkit` (`pdfDoc.registerFontkit()`), which *does* shape Arabic
+correctly when drawing through a custom embedded font. Scoped narrowly: only
+the fixed "خالي الطرف" string uses this font; the "الاسم" column's
+Helvetica-based drawing is untouched, so a reviewer's Arabic `fullName`
+would still fail there — a pre-existing gap this didn't set out to fix.
+
 ## What's on a clearance request
 
 Besides the per-department signature snapshot, `ClearanceRequest` stores why
-the employee is leaving (`reason`: `resignation` / `new_job` / `retirement` —
-"retirement" is Egypt's mandatory age-60 policy, referred to as "المعاش") and
-their `lastWorkingDay`. File Management enters all of this directly —
+the employee is leaving (`reason`: one of 13 HR-provided categories — see
+`LEAVING_REASONS` in `ClearanceRequest.js` and the matching `REASONS` +
+i18n keys in `frontend/src/utils/leavingReason.js`; "retirement" is Egypt's
+mandatory age-60 policy, referred to as "المعاش", distinct from the
+voluntary "early_retirement" / "معاش مبكر") and their `lastWorkingDay`. The
+employee's job title (`employeeJobTitle`) is picked from a fixed company
+title list (`frontend/src/jobTitles.js`, HR-provided, Arabic-only regardless
+of UI language) via a searchable `<input list>`/`<datalist>`, not free text.
+File Management enters all of this directly —
 `employeeNumber`, `employeeFullName`, `employeeJobTitle`,
 `employeeDepartment_ar/en`, `reason`, `lastWorkingDay` — on the
 create-request form (`POST /requests`, validated there); NOT by the employee,
@@ -292,8 +380,9 @@ below has.
 - `file_management`: files requests on an employee's behalf (`POST /requests`,
   typing in the employee's data directly), sees a high-level status summary
   of every request in the shared File Management queue, and downloads the
-  final signed PDF once complete.
-  Can review department evidence but cannot see signer identity.
+  final signed PDF once complete. Can review department evidence and see
+  each signer's identity + contact info (name, sign date, email, landline)
+  to follow up directly on a problem signature.
 - `reviewer`: tied to one `departmentKey`. Any reviewer can sign their
   department (or, for IT, their one assigned item) once it's unlocked.
   Reviewers whose department has `hasOversightDashboard: true` (Wages,

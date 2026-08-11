@@ -1,12 +1,50 @@
 # Project Status
 
-Last updated: 2026-08-10 (webp dropped from accepted evidence formats; three
-long-open design questions resolved and closed out — no AD/LDAP integration
-ever, no separate "temporary database" archival step, deployment target is a
-company Windows Server + local MongoDB — by Nader + Claude).
+Last updated: 2026-08-11 (added IT-assisted password reset with a one-time
+password, a "Forgot your password?" contact list on the login page, Active
+Directory-specific wording + a fixed IT dashboard bug, permanent request
+deletion, and the paper form's "البيان" column — by Nader + Claude).
 Update this file whenever a task moves — don't let it go stale.
 
 ## Done
+
+- [x] **IT-assisted password reset via a one-time password (2026-08-11).**
+      No email infrastructure exists in this app to send a reset link
+      through, and the team decided that's not worth adding for this small a
+      user base — instead, any of IT's 5 reviewers can issue ANY account
+      (another IT reviewer, a plain department reviewer, or File Management)
+      a fresh one-time password (`POST /auth/reset-password`, IT's own
+      password re-auth required first). `User.mustResetPassword` flips to
+      `true`; `requireAuth` (`backend/src/middleware/auth.middleware.js`)
+      enforces server-side that a token minted from a one-time-password login
+      can reach exactly one route -- `POST /auth/set-new-password` -- until
+      the person sets a real password there (re-authenticating with the
+      one-time password first, same pattern as every other sensitive action
+      in this app). Frontend: new `frontend/src/pages/SetNewPassword.jsx`,
+      routed at `/set-new-password` and enforced as a hard redirect in
+      `App.jsx`'s `RequireRole`/`Home` whenever `user.mustResetPassword` is
+      true; a new IT-only "Reset a colleague's password" panel
+      (`ResetPasswordPanel` in `ReviewerDashboard.jsx`) shows the generated
+      one-time password once, to hand off directly (phone call, in person).
+      Verified end to end: full `backend/scripts/smoke-test.js` run (now
+      covering the whole flow -- issuing a one-time password, the old
+      password breaking, the 403 lockout on every other route, wrong-OTP and
+      weak-new-password rejections, and the fresh token working normally
+      after success) passing against a local MongoDB (the shared Atlas dev
+      cluster was briefly unreachable, unrelated to this change -- see
+      `npm run dev:local`/`seed:local` for the Docker-based local fallback),
+      plus a clean production frontend build.
+      Follow-up the same day: the login page now has a "Forgot your
+      password?" disclosure (styled like the existing demo-accounts one)
+      listing every IT reviewer's name, email, and landline, so someone
+      locked out actually knows who to contact instead of just being told
+      to "ask IT". Backed by a new `GET /auth/it-contacts` -- deliberately
+      PUBLIC/no-auth, same reasoning as `GET /api/departments`, since a
+      locked-out person by definition has no token to authenticate with.
+      Returns only `fullName`/`fullName_ar`/`userID`/`landlineNumber` for
+      `departmentKey: "it"` users (no `passwordHash`, no `_id`). Verified
+      live in-browser in both languages: opened the disclosure, confirmed
+      all 5 IT reviewers list with correct `mailto:`/`tel:` links.
 
 - [x] Repo scaffolded: `backend/` (Express + Mongoose) and `frontend/` (React + Vite).
 - [x] Mock Active Directory (`User` model) + JWT login (`/api/auth/login`).
@@ -707,6 +745,79 @@ Update this file whenever a task moves — don't let it go stale.
       re-fetches whenever the search value changes. Still deliberately no
       pagination -- searching by employee number solves "find a specific old
       request without scrolling forever" the same way the date range did.
+- [x] **Batch of HR-driven changes (2026-08-11):**
+  - Renamed File Management's display label to "إدارة الوثائق و السجلات" /
+    "Document and Records Management" everywhere it's user-facing (locales,
+    `demoAccounts.js`, `demo-users.data.js`) -- the internal `role:
+    "file_management"` key is unchanged, this is display-only.
+  - Reworded the "moving to another company" leaving reason
+    (`reasonNewJob`) and expanded `LEAVING_REASONS` from 4 to 13 options to
+    match HR's real categories (death, dismissal, secondment/delegation/
+    assignment endings, sister-company transfer, driver/fixed-term/
+    comprehensive-bonus contract endings, on top of the existing
+    resignation/retirement/early-retirement/new-job) -- see
+    `ClearanceRequest.js` and `frontend/src/utils/leavingReason.js`. The
+    create-request form's reason picker switched from a radio group to a
+    `<select>` now that there are 13 options instead of 4.
+  - Renamed "النيابة / المساعدة"'s employee-search to also match by name,
+    not just employee number -- `buildEmployeeSearchFilter()` (was
+    `buildEmployeeNumberFilter()`) now does an `$or` regex match on
+    `employeeNumber` OR `employeeFullName` behind a single `?q=` param;
+    `EmployeeNumberFilter.jsx` renamed to `EmployeeSearchFilter.jsx`.
+  - Registration now requires a `landlineNumber` (company internal/extension
+    line) for every role, enforced in `auth.routes.js` (not the schema, so
+    seed data is unaffected) and carried in the JWT. Demo accounts got
+    sequential extensions (`1000` for File Management, `1001`-`1012` for
+    single-mode reviewers, `1101`-`1105` for IT items) in
+    `demo-users.data.js`.
+  - File Management can now see full signer identity + contact info (name,
+    sign date, email, landline) per department/item, same as Wages/Finance
+    oversight already could -- a deliberate reversal of the previous "File
+    Management never sees signer identity" rule, confirmed with Nader. New
+    `signedByLandlineNumber` snapshotted at sign time (same pattern as
+    `signedByFullName`), cleared on reopen.
+    `summarizeForFileManagement()` and `RequestOversightGrid.jsx` updated
+    together (the component's `detail="full"`/`"summary"` prop is gone --
+    both callers now render the same signer-info block).
+- [x] **Second batch (2026-08-11): Active Directory-specific wording for IT,
+  permanent delete, IT's own dashboard no longer hides the pending
+  revoke-access action, and the paper form's "البيان" column:**
+  - IT's own revoke-access button/hint/busy-label/banner
+    (`reviewer.revokeAccessButton` etc.) reworded around "Active Directory"
+    specifically ("حذف من الدليل النشط" / "Delete from Active Directory"),
+    plus a new blue `.status-pill.awaiting-ad` badge on IT's own request
+    cards for `readyForAccessRevocation`. Deliberately scoped to strings that
+    were already exclusively IT-facing -- File Management's approve step,
+    oversight's badges, and the shared `RequestOversightGrid` banner keep
+    the original generic "access/permissions" wording (confirmed with
+    Nader).
+  - Fixed a real bug this surfaced: IT's own `needsAction` flag didn't
+    account for the revoke-access step at all -- once IT's own item/
+    department was signed, a fully-signed-and-FM-approved request quietly
+    fell into "already signed by your department" instead of "waiting on
+    your department", even though IT still had the revoke-access action
+    outstanding. `redactToOwnDepartment()` now OR's in a second condition
+    (`itAwaitingRevocation`) so it correctly stays in the "needs action"
+    bucket (with the new blue badge) until IT actually revokes access.
+  - File Management can now permanently delete a request once it's fully
+    completed (`POST /:id/delete`, requires `status === "completed"`,
+    password re-auth) -- e.g. the employee came back to the company after
+    already being cleared. Real hard delete: the MongoDB document and its
+    `backend/uploads/<requestId>/` evidence directory are both removed, no
+    soft-delete/undo anywhere. (First version allowed deleting at any stage
+    -- caught as a bug the same day: it showed a delete button on requests
+    still mid-flight, like "all 13 signed, awaiting IT", which was never the
+    intent. Scoped down to completed-only, both the route and the button.)
+  - The paper form's third column per row, "البيان" (previously deliberately
+    left blank), now gets a fixed "خالي الطرف" stamp on every signed row.
+    Needed an actual Arabic-capable font (`StandardFonts.Helvetica`, used for
+    the "الاسم" column, has no Arabic glyphs, and pdf-lib's standard-font
+    path doesn't shape Arabic contextual letterforms anyway) --
+    `backend/assets/cairo-arabic.ttf`, decompressed once from the frontend's
+    own `cairo-var-arabic.woff2` via the `wawoff2` package, embedded through
+    `@pdf-lib/fontkit` (which does shape Arabic correctly via a custom
+    embedded font). Scoped to just this one fixed string -- the "الاسم"
+    column's Helvetica-based drawing is untouched.
 
 ## Team update
 

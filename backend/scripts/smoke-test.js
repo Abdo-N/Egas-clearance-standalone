@@ -26,8 +26,9 @@
  *   - File Management can view a department's evidence as soon as that
  *     department signs, same as oversight (wages/finance) -- this is what
  *     lets them actually spot an unclear signature and reopen it BEFORE
- *     giving the revoke-access OK, not only after approving. Signer identity
- *     is still never shown to them, though.
+ *     giving the revoke-access OK, not only after approving. File Management
+ *     also sees signer identity + contact (name, sign date, email, landline)
+ *     per department/item, same as oversight (2026-08-11).
  *   - A plain reviewer's request list/detail is redacted to their own
  *     department only.
  */
@@ -62,6 +63,7 @@ async function register({ slug, fullName, role, departmentKey, assignedItemKey }
       email: `${slug}.${RUN_ID}@smoketest.local`,
       password: PASSWORD,
       fullName,
+      landlineNumber: "1234",
       role,
       departmentKey,
       assignedItemKey,
@@ -107,7 +109,11 @@ async function registerAllAccounts() {
 
 function fakeEvidence() {
   const form = new FormData();
-  form.append("password", PASSWORD);
+  // Every signSingle/signItem call site signs with a demo-seeded reviewer's
+  // token (DEMO_PASSWORD), never the fresh smoke-test-registered accounts
+  // (PASSWORD) -- this was sending the wrong one and failing signature calls
+  // with "Incorrect password" as soon as a department actually unlocked.
+  form.append("password", DEMO_PASSWORD);
   form.append("evidence", new Blob([Buffer.from("fake-signature-bytes")], { type: "image/png" }), "signature.png");
   return form;
 }
@@ -205,7 +211,7 @@ async function main() {
   const wrongDeptUndo = await fetch(`${BASE}/requests/${requestId}/departments/illicit_gains/reopen`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${libraryToken}` },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password: DEMO_PASSWORD }),
   });
   assert(wrongDeptUndo.status === 403, "expected 403 undoing another department's signature");
 
@@ -231,7 +237,7 @@ async function main() {
   const phoneSelfUndo = await fetch(`${BASE}/requests/${requestId}/departments/it/items/phone/reopen`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password: DEMO_PASSWORD }),
   });
   const phoneSelfUndoJson = await phoneSelfUndo.json();
   if (phoneSelfUndo.status !== 200) throw new Error(`IT self-undo failed: ${JSON.stringify(phoneSelfUndoJson)}`);
@@ -249,7 +255,7 @@ async function main() {
   const wrongItemUndo = await fetch(`${BASE}/requests/${requestId}/departments/it/items/phone/reopen`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileDataToken}` },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password: DEMO_PASSWORD }),
   });
   assert(wrongItemUndo.status === 403, "expected 403 undoing another reviewer's assigned item");
 
@@ -270,8 +276,8 @@ async function main() {
   const finalRequest = await finalGet.json();
   assert(finalRequest.status === "in_progress", `expected 'in_progress' until access is revoked, got '${finalRequest.status}'`);
   assert(
-    finalRequest.departments.every((d) => !("signedByUserID" in d)),
-    "expected File Management's view to never include signer identity"
+    finalRequest.departments.find((d) => d.departmentKey === "wages").signedByUserID === "wages@demo.local",
+    "expected File Management's view to include signer identity + contact (2026-08-11 rule change)"
   );
   assert(
     finalRequest.departments.find((d) => d.departmentKey === "wages").evidence?.mimeType === "image/png",
@@ -299,7 +305,7 @@ async function main() {
   const archiveBeforeApproval = await fetch(`${BASE}/requests/${requestId}/revoke-access`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password: DEMO_PASSWORD }),
   });
   assert(archiveBeforeApproval.status === 400, "expected 400 for revoke-access before File Management approval");
 
@@ -355,7 +361,7 @@ async function main() {
   const nonItArchive = await fetch(`${BASE}/requests/${requestId}/revoke-access`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${financeToken}` },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password: DEMO_PASSWORD }),
   });
   assert(nonItArchive.status === 403, "expected 403 for non-IT revoke-access");
 
@@ -364,7 +370,7 @@ async function main() {
   const archiveRes = await fetch(`${BASE}/requests/${requestId}/revoke-access`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${itArchiveToken}` },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password: DEMO_PASSWORD }),
   });
   const archiveJson = await archiveRes.json();
   if (archiveRes.status !== 200) throw new Error(`revoke-access failed: ${JSON.stringify(archiveJson)}`);
@@ -375,7 +381,7 @@ async function main() {
   const archiveAgain = await fetch(`${BASE}/requests/${requestId}/revoke-access`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${itArchiveToken}` },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password: DEMO_PASSWORD }),
   });
   assert(archiveAgain.status === 409, "expected 409 for double revoke-access");
 
@@ -397,6 +403,118 @@ async function main() {
   console.log("--- a plain (non-oversight) reviewer cannot fetch the PDF (403) ---");
   const pdfAsPlain = await fetch(`${BASE}/requests/${requestId}/pdf`, { headers: { Authorization: `Bearer ${securityToken}` } });
   assert(pdfAsPlain.status === 403, "expected 403 fetching PDF as a plain reviewer");
+
+  console.log("--- password reset: IT issues a one-time password to a forgetful account ---");
+  await register({
+    slug: "reset-target",
+    fullName: "Reset Target Reviewer",
+    role: "reviewer",
+    departmentKey: "illicit_gains",
+  });
+  const resetTargetEmail = `reset-target.${RUN_ID}@smoketest.local`;
+
+  console.log("--- a non-IT reviewer cannot reset anyone's password (403) ---");
+  const nonItReset = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${illicitGains1Token}` },
+    body: JSON.stringify({ userID: resetTargetEmail, password: DEMO_PASSWORD }),
+  });
+  assert(nonItReset.status === 403, "expected 403 for a non-IT reviewer calling reset-password");
+
+  console.log("--- IT re-authenticating with the WRONG own password is rejected (401) ---");
+  const wrongOwnPasswordReset = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
+    body: JSON.stringify({ userID: resetTargetEmail, password: "TotallyWrong!123" }),
+  });
+  assert(wrongOwnPasswordReset.status === 401, "expected 401 for IT re-authenticating with the wrong password");
+
+  console.log("--- resetting a nonexistent account is rejected (404) ---");
+  const missingAccountReset = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
+    body: JSON.stringify({ userID: `nobody.${RUN_ID}@smoketest.local`, password: DEMO_PASSWORD }),
+  });
+  assert(missingAccountReset.status === 404, "expected 404 resetting a nonexistent account");
+
+  // Same route/logic regardless of the target's role or department -- IT
+  // resetting another IT reviewer isn't exercised separately since it's the
+  // identical code path, and every IT item is already permanently owned by a
+  // demo account (no spare item to register a throwaway IT account against).
+  console.log("--- IT issues the reset target a one-time password ---");
+  const resetRes = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
+    body: JSON.stringify({ userID: resetTargetEmail, password: DEMO_PASSWORD }),
+  });
+  const resetJson = await resetRes.json();
+  if (resetRes.status !== 200) throw new Error(`reset-password failed: ${JSON.stringify(resetJson)}`);
+  assert(
+    typeof resetJson.oneTimePassword === "string" && resetJson.oneTimePassword.length >= 12,
+    "expected a one-time password string back"
+  );
+
+  console.log("--- the account's original password no longer works ---");
+  const oldPasswordLogin = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: resetTargetEmail, password: PASSWORD }),
+  });
+  assert(oldPasswordLogin.status === 401, "expected the account's original password to stop working after a reset");
+
+  console.log("--- logging in with the one-time password succeeds, flagged mustResetPassword ---");
+  const otpLoginRes = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: resetTargetEmail, password: resetJson.oneTimePassword }),
+  });
+  const otpLoginJson = await otpLoginRes.json();
+  if (otpLoginRes.status !== 200) throw new Error(`one-time-password login failed: ${JSON.stringify(otpLoginJson)}`);
+  assert(otpLoginJson.user.mustResetPassword === true, "expected mustResetPassword=true right after a one-time-password login");
+  const otpToken = otpLoginJson.token;
+
+  console.log("--- a mustResetPassword token can't reach any other route (403) ---");
+  const blockedRoute = await fetch(`${BASE}/requests`, { headers: { Authorization: `Bearer ${otpToken}` } });
+  const blockedJson = await blockedRoute.json();
+  assert(blockedRoute.status === 403, "expected 403 hitting a protected route with a mustResetPassword token");
+  assert(blockedJson.code === "PASSWORD_RESET_REQUIRED", "expected the PASSWORD_RESET_REQUIRED error code");
+
+  console.log("--- set-new-password with the WRONG one-time password is rejected (401) ---");
+  const wrongOtp = await fetch(`${BASE}/auth/set-new-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${otpToken}` },
+    body: JSON.stringify({ currentPassword: "NotTheRealOtp!123", newPassword: "AnotherStr0ngPassword!" }),
+  });
+  assert(wrongOtp.status === 401, "expected 401 setting a new password with the wrong one-time password");
+
+  console.log("--- set-new-password rejects a weak new password (400) ---");
+  const weakNewPassword = await fetch(`${BASE}/auth/set-new-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${otpToken}` },
+    body: JSON.stringify({ currentPassword: resetJson.oneTimePassword, newPassword: "short" }),
+  });
+  assert(weakNewPassword.status === 400, "expected 400 setting a weak new password");
+
+  console.log("--- set-new-password succeeds and clears mustResetPassword ---");
+  const newPassword = "Br4ndNewPassword!";
+  const setNewPasswordRes = await fetch(`${BASE}/auth/set-new-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${otpToken}` },
+    body: JSON.stringify({ currentPassword: resetJson.oneTimePassword, newPassword }),
+  });
+  const setNewPasswordJson = await setNewPasswordRes.json();
+  if (setNewPasswordRes.status !== 200) throw new Error(`set-new-password failed: ${JSON.stringify(setNewPasswordJson)}`);
+  assert(setNewPasswordJson.user.mustResetPassword === false, "expected mustResetPassword=false after setting a new password");
+
+  console.log("--- the fresh post-reset token works normally, and the new password logs in going forward ---");
+  const unblockedRoute = await fetch(`${BASE}/requests`, { headers: { Authorization: `Bearer ${setNewPasswordJson.token}` } });
+  assert(unblockedRoute.status === 200, "expected 200 hitting a protected route with the fresh post-reset token");
+  const relogin = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: resetTargetEmail, password: newPassword }),
+  });
+  assert(relogin.status === 200, "expected the newly-set password to work for a fresh login");
 
   console.log("\nALL CHECKS PASSED");
 }

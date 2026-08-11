@@ -7,7 +7,15 @@ function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload; // { userID, fullName, role, departmentKey, assignedItemKey, hasOversightDashboard }
+    // A one-time password issued by IT (see POST /auth/reset-password) only
+    // ever unlocks one route -- setting a real password -- so a token minted
+    // right after that login can't be used for anything else in the
+    // meantime. Checked here, not just in the frontend, since the frontend
+    // check is cosmetic everywhere else in this app too.
+    if (payload.mustResetPassword && req.path !== "/set-new-password") {
+      return res.status(403).json({ error: "You must set a new password before continuing", code: "PASSWORD_RESET_REQUIRED" });
+    }
+    req.user = payload; // { userID, fullName, role, departmentKey, assignedItemKey, landlineNumber, hasOversightDashboard }
     next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired token" });

@@ -29,6 +29,7 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [landlineNumber, setLandlineNumber] = useState("");
   const [role, setRole] = useState("file_management");
   const [departmentKey, setDepartmentKey] = useState("");
   const [assignedItemKey, setAssignedItemKey] = useState("");
@@ -61,6 +62,7 @@ export default function Register() {
         email,
         password,
         fullName,
+        landlineNumber,
         role,
         departmentKey: role === "reviewer" ? departmentKey : undefined,
         assignedItemKey: role === "reviewer" && isItemized ? assignedItemKey : undefined,
@@ -74,7 +76,7 @@ export default function Register() {
   }
 
   return (
-    <div
+    <div className="auth-page"
       style={{
         minHeight: "100vh",
         width: "100vw",
@@ -85,7 +87,7 @@ export default function Register() {
         padding: "24px 0"
       }}
     >
-      <div
+      <div className="auth-page-background"
         style={{
           position: "fixed",
           inset: 0,
@@ -98,7 +100,7 @@ export default function Register() {
       />
 
       <div
-        className="login-card"
+        className="login-card auth-card auth-card--wide"
         style={{
           backgroundColor: "#f4f5f6",
           width: "100%",
@@ -133,6 +135,19 @@ export default function Register() {
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
+              required
+              style={inputStyle}
+            />
+          </div>
+
+          <div style={{ marginBottom: "15px" }}>
+            <label style={{ display: "block", fontSize: "13px", color: "#333", marginBottom: "5px", fontWeight: "500" }}>
+              {t("register.landlineNumber")}
+            </label>
+            <input
+              type="tel"
+              value={landlineNumber}
+              onChange={(e) => setLandlineNumber(e.target.value)}
               required
               style={inputStyle}
             />
@@ -259,6 +274,7 @@ export default function Register() {
 
           <button
             type="submit"
+            className="auth-submit"
             disabled={loading}
             style={{
               width: "100%",
@@ -276,7 +292,7 @@ export default function Register() {
           </button>
         </form>
 
-        <p style={{ margin: "16px 0 0", fontSize: "13px", color: "#666", textAlign: "center" }}>
+        <p className="auth-footer" style={{ margin: "16px 0 0", fontSize: "13px", color: "#666", textAlign: "center" }}>
           {t("register.haveAccount")}{" "}
           <Link to="/login" style={{ color: "#008069", fontWeight: "600", textDecoration: "none" }}>
             {t("register.signIn")}

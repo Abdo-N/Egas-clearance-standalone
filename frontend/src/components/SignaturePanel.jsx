@@ -6,6 +6,11 @@ import ReauthConfirmButton from "./ReauthConfirmButton";
 import PasswordInput from "./PasswordInput";
 import { formatDate } from "../utils/formatDate";
 
+// Mirrors NOTES_MAX_LENGTH in backend/src/routes/request.routes.js -- keeps
+// input from exceeding what fits in the fixed-size box clearancePdf.js draws
+// for it well before the server has to reject it.
+const NOTES_MAX_LENGTH = 300;
+
 // A local (not-yet-uploaded) preview of the chosen evidence file, mirroring
 // EvidencePreview.jsx's already-uploaded thumbnail -- image files get an
 // inline <img>, anything else (PDF is the common case in practice) just
@@ -37,15 +42,16 @@ function LocalFilePreview({ file }) {
  * checkbox-based checklist. Shared by both single-signature departments and
  * each of IT's itemized checklist entries.
  */
-function SignForm({ onSubmit, busy, t }) {
+function SignForm({ onSubmit, busy, t, showNotes, initialNotes }) {
   const [password, setPassword] = useState("");
   const [file, setFile] = useState(null);
+  const [notes, setNotes] = useState(initialNotes || "");
   const fileInputRef = useRef(null);
 
   function handleSubmit(e) {
     e.preventDefault();
     if (!password || !file) return;
-    onSubmit({ password, file });
+    onSubmit({ password, file, notes });
   }
 
   function handleUndoUpload() {
@@ -82,6 +88,18 @@ function SignForm({ onSubmit, busy, t }) {
           </>
         )}
       </div>
+      {showNotes && (
+        <div className="form-group">
+          <label>{t("signature.notesLabel")}</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            maxLength={NOTES_MAX_LENGTH}
+            rows={3}
+            placeholder={t("signature.notesPlaceholder")}
+          />
+        </div>
+      )}
       <button type="submit" className="approve-button" disabled={busy || !password || !file}>
         {busy ? t("signature.signing") : t("signature.signButton")}
       </button>
@@ -184,10 +202,19 @@ export default function SignaturePanel({ department, user, onSign, busy, onUndo,
           {department.evidence && (
             <EvidencePreview requestId={requestId} deptKey={department.departmentKey} mimeType={department.evidence.mimeType} />
           )}
+          {department.hasOversightDashboard && department.notes && (
+            <p className="oversight-grid-notes">{department.notes}</p>
+          )}
           {onUndo && <UndoControl t={t} onConfirm={(password) => onUndo({ password })} />}
         </div>
       ) : (
-        <SignForm t={t} busy={busy} onSubmit={({ password, file }) => onSign({ password, file })} />
+        <SignForm
+          t={t}
+          busy={busy}
+          showNotes={department.hasOversightDashboard}
+          initialNotes={department.notes}
+          onSubmit={({ password, file, notes }) => onSign({ password, file, notes })}
+        />
       )}
     </div>
   );

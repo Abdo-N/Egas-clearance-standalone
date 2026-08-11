@@ -4,10 +4,34 @@ import EvidencePreview from "./EvidencePreview";
 import ReauthConfirmButton from "./ReauthConfirmButton";
 import { formatDate } from "../utils/formatDate";
 
-// File Management's reopen control -- ReauthConfirmButton wired to the
-// fileManagement.* i18n keys. Extracted as its own component only so the
-// wiring below doesn't repeat five label props at each of the two call
-// sites (department-level and item-level).
+// Labeled name/date/email/landline block -- landline is omitted when absent
+// (accounts registered before landlineNumber became required won't have
+// one).
+function SignerInfo({ fullName, signedAt, userID, landlineNumber, lang, t }) {
+  return (
+    <div className="oversight-grid-signer">
+      <div className="oversight-grid-signer-field">
+        <span>{t("common.signerName")}</span>
+        <strong>{fullName}</strong>
+      </div>
+      <div className="oversight-grid-signer-field">
+        <span>{t("common.signerDate")}</span>
+        <strong>{formatDate(signedAt, lang)}</strong>
+      </div>
+      <div className="oversight-grid-signer-field">
+        <span>{t("common.signerEmail")}</span>
+        <strong>{userID}</strong>
+      </div>
+      {landlineNumber && (
+        <div className="oversight-grid-signer-field">
+          <span>{t("common.signerLandline")}</span>
+          <strong>{landlineNumber}</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReopenControl({ onConfirm, t }) {
   return (
     <ReauthConfirmButton
@@ -22,24 +46,19 @@ function ReopenControl({ onConfirm, t }) {
 }
 
 /**
- * The 13-department status grid. Two visibility levels, matching the
- * backend's redaction rules:
- *   - "full" (wages/finance oversight reviewers): status + who signed + when.
- *   - "summary" (File Management): status only -- no signer identity, ever.
- *     File Management files requests and only gets a high-level view of
- *     their own progress; the one narrow exception is evidence itself (see
- *     below), never who signed or when.
- * Both levels get an inline evidence photo/file preview next to a completed
- * department/item's status, live as each one signs -- see
- * summarizeForFileManagement in request.routes.js for File Management's
- * side of this (no approval step required to see it).
+ * The 13-department status grid, shared by wages/finance oversight and File
+ * Management (see summarizeForFileManagement / withOwnDepartmentAnnotated in
+ * request.routes.js) -- both now get the same per-department detail: status,
+ * who signed, when, and how to reach them (email + landline), plus an inline
+ * evidence photo/file preview next to a completed department/item's status,
+ * live as each one signs.
  *
  * `onReopenDepartment`/`onReopenItem` are optional (File Management only --
  * see FileManagementDashboard.jsx). When provided, a "Reopen" control shows
  * next to any already-signed row/item so File Management can undo a
  * signature that turned out illegible and let the department sign again.
  */
-export default function RequestOversightGrid({ request, detail = "full", onReopenDepartment, onReopenItem }) {
+export default function RequestOversightGrid({ request, onReopenDepartment, onReopenItem }) {
   const { t, i18n } = useTranslation();
   const isAr = i18n.language === "ar";
   const sorted = [...request.departments].sort((a, b) => a.order - b.order);
@@ -94,19 +113,21 @@ export default function RequestOversightGrid({ request, detail = "full", onReope
                 {isIt && d.status === "completed" && awaitingAccessRevocation && (
                   <small className="oversight-grid-it-note">{t("common.itAccessRevocationPendingNote")}</small>
                 )}
-                {detail === "full" && d.status === "completed" && d.signatureMode === "single" && (
-                  <small className="oversight-grid-signer">
-                    {d.signedByFullName} · {formatDate(d.signedAt, i18n.language)}
-                  </small>
-                )}
-                {detail === "full" && d.status === "completed" && d.signatureMode === "itemized" && (
-                  <small className="oversight-grid-signer">
-                    {d.items.map((i) => i.signedByFullName).join(" / ")} ·{" "}
-                    {formatDate(d.items[d.items.length - 1]?.signedAt, i18n.language)}
-                  </small>
+                {d.status === "completed" && d.signatureMode === "single" && (
+                  <SignerInfo
+                    fullName={d.signedByFullName}
+                    signedAt={d.signedAt}
+                    userID={d.signedByUserID}
+                    landlineNumber={d.signedByLandlineNumber}
+                    lang={i18n.language}
+                    t={t}
+                  />
                 )}
                 {d.status === "completed" && d.evidence && d.signatureMode === "single" && (
                   <EvidencePreview requestId={request._id} deptKey={d.departmentKey} mimeType={d.evidence.mimeType} />
+                )}
+                {d.status === "completed" && d.hasOversightDashboard && d.notes && (
+                  <p className="oversight-grid-notes">{d.notes}</p>
                 )}
                 {canReopenDept && (
                   <ReopenControl t={t} onConfirm={(password) => onReopenDepartment(d.departmentKey, password)} />
@@ -121,6 +142,16 @@ export default function RequestOversightGrid({ request, detail = "full", onReope
                         <span className={`status-pill ${item.status}`}>
                           {item.status === "completed" ? t("employee.departmentCompleted") : t("employee.departmentPending")}
                         </span>
+                        {item.status === "completed" && (
+                          <SignerInfo
+                            fullName={item.signedByFullName}
+                            signedAt={item.signedAt}
+                            userID={item.signedByUserID}
+                            landlineNumber={item.signedByLandlineNumber}
+                            lang={i18n.language}
+                            t={t}
+                          />
+                        )}
                         <span className="oversight-grid-item-actions">
                           {item.status === "completed" && item.evidence && (
                             <EvidencePreview

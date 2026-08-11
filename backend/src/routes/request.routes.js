@@ -14,6 +14,11 @@ const router = express.Router();
 
 const UPLOAD_ROOT = path.resolve(__dirname, "../../uploads");
 
+// Keeps a submitted note comfortably inside the fixed-size box clearancePdf.js
+// draws for it (see NOTES_BOX_BY_ORDER there) -- generous for a short remark,
+// not meant for paragraphs.
+const NOTES_MAX_LENGTH = 300;
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(UPLOAD_ROOT, req.params.id);
@@ -71,24 +76,28 @@ function isDepartmentUnlocked(departments, deptKey) {
   return departments.filter((d) => d.tier < dept.tier).every((d) => d.status === "completed");
 }
 
-// Optional `?employeeNumber=...` on the list route -- lets File Management
-// and reviewers find a specific employee's request(s) instead of scrolling
-// unbounded request history. Partial, case-insensitive match (not exact) so
-// a caller can search without knowing the full number; regex metacharacters
-// are escaped since this becomes part of a Mongo regex, not treated as a
-// pattern itself.
-function buildEmployeeNumberFilter(req) {
-  const employeeNumber = req.query.employeeNumber?.trim();
-  if (!employeeNumber) return {};
-  const escaped = employeeNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return { employeeNumber: { $regex: escaped, $options: "i" } };
+// Optional `?q=...` on the list route -- lets File Management and reviewers
+// find a specific employee's request(s) by number OR name instead of
+// scrolling unbounded request history. Partial, case-insensitive match on
+// either field (not exact) so a caller can search without knowing the full
+// number or exact spelling of the name; regex metacharacters are escaped
+// since this becomes part of a Mongo regex, not treated as a pattern itself.
+function buildEmployeeSearchFilter(req) {
+  const q = req.query.q?.trim();
+  if (!q) return {};
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = { $regex: escaped, $options: "i" };
+  return { $or: [{ employeeNumber: regex }, { employeeFullName: regex }] };
 }
 
-// Only wages/finance (hasOversightDashboard, embedded in the JWT at login
-// so this never hardcodes department keys) get full per-department detail
-// -- who signed, when, and the uploaded evidence. File Management does NOT
-// get this: they file requests and get a high-level progress view of their
-// own submissions only, never signer identity or evidence.
+// Only wages/finance (hasOversightDashboard, embedded in the JWT at login so
+// this never hardcodes department keys) get the raw, unfiltered department
+// array (see withOwnDepartmentAnnotated) -- everyone else, including File
+// Management, goes through a curated shape instead (redactToOwnDepartment /
+// summarizeForFileManagement). File Management's curated shape now also
+// carries signer identity + contact (see summarizeForFileManagement), so the
+// remaining difference from oversight's view is really just "raw request
+// document" vs. "picked fields", not who gets to see a signer's name.
 function canSeeFull(user) {
   return user.role === "reviewer" && user.hasOversightDashboard === true;
 }
@@ -125,8 +134,17 @@ function redactToOwnDepartment(request, user) {
   // for oversight reviewers (see withOwnDepartmentAnnotated below), who see
   // every request including ones where their own tier-2 department hasn't
   // unlocked yet.
-  const needsAction = isDepartmentUnlocked(obj.departments, user.departmentKey) && isPendingForReviewer(own, user);
-  return { ...obj, departments: [{ ...own, needsAction }], ...flags };
+  // IT specifically needs a second OR-branch here: once their own item/
+  // department is signed, isPendingForReviewer flips to false even though
+  // the revoke-access action is still outstanding -- and that action isn't
+  // tied to any one reviewer's assigned item, any of IT's 5 can do it. Without
+  // this, a request sitting at "everyone signed, ready for IT to act" reads
+  // as "already handled" and quietly drops off IT's radar (2026-08-11).
+  const itAwaitingRevocation = user.departmentKey === "it" && flags.readyForAccessRevocation && !obj.accessRevoked;
+  const needsAction =
+    (isDepartmentUnlocked(obj.departments, user.departmentKey) && isPendingForReviewer(own, user)) ||
+    itAwaitingRevocation;
+  return { ...obj, departments: [{ ...own, needsAction, itAwaitingRevocation }], ...flags };
 }
 
 // Same `needsAction` tag as redactToOwnDepartment, but for oversight
@@ -154,8 +172,11 @@ function withOwnDepartmentAnnotated(request, user) {
 // signs, its uploaded photo/file rides along right next to that status, the
 // same moment wages/finance oversight would see it -- File Management
 // doesn't have to wait for full completion or their own
-// approve-clearance step to spot-check legibility. Still never a signer's
-// name, though.
+// approve-clearance step to spot-check legibility. Signer identity + contact
+// (name, sign date, email, landline) is included too (2026-08-11) -- File
+// Management now gets the same per-department detail oversight sees, so they
+// can actually reach a reviewer directly if a signature needs following up
+// on, not just see that "something" was signed.
 function summarizeForFileManagement(request) {
   const obj = request.toObject ? request.toObject() : request;
   return {
@@ -173,6 +194,9 @@ function summarizeForFileManagement(request) {
       order: d.order,
       tier: d.tier,
       status: d.status,
+      // RequestOversightGrid.jsx checks this to decide whether to show the
+      // `notes` field below -- only wages/finance ever have one.
+      hasOversightDashboard: d.hasOversightDashboard,
       // RequestOversightGrid.jsx branches on this (single vs. itemized) to
       // decide whether to show a department-level evidence preview/Reopen
       // control or per-item ones -- omitting it here left both silently
@@ -180,9 +204,17 @@ function summarizeForFileManagement(request) {
       // always false.
       signatureMode: d.signatureMode,
       evidence: d.status === "completed" ? d.evidence : undefined,
-      // Item-level status (+ evidence once that item is signed) so File
-      // Management can tell WHICH of IT's 5 items to reopen if a signature
-      // turns out unclear -- no signer identity either way.
+      signedByUserID: d.signedByUserID,
+      signedByFullName: d.signedByFullName,
+      signedByLandlineNumber: d.signedByLandlineNumber,
+      signedAt: d.signedAt,
+      // Wages/Finance's optional remark, same visibility as their evidence
+      // just above -- empty string pre-signing anyway, so gating on status
+      // is just belt-and-suspenders consistency with the rest of this shape.
+      notes: d.status === "completed" ? d.notes : undefined,
+      // Item-level status (+ evidence + signer contact once that item is
+      // signed) so File Management can tell WHICH of IT's 5 items to reopen
+      // if a signature turns out unclear, and who to call about it.
       items:
         d.signatureMode === "itemized"
           ? d.items.map((i) => ({
@@ -191,6 +223,10 @@ function summarizeForFileManagement(request) {
               label_en: i.label_en,
               status: i.status,
               evidence: i.status === "completed" ? i.evidence : undefined,
+              signedByUserID: i.signedByUserID,
+              signedByFullName: i.signedByFullName,
+              signedByLandlineNumber: i.signedByLandlineNumber,
+              signedAt: i.signedAt,
             }))
           : undefined,
     })),
@@ -314,7 +350,7 @@ router.post("/", requireAuth, requireRole("file_management"), asyncHandler(async
  * what's currently pending.
  */
 router.get("/", requireAuth, requireRole("file_management", "reviewer"), asyncHandler(async (req, res) => {
-  const searchFilter = buildEmployeeNumberFilter(req);
+  const searchFilter = buildEmployeeSearchFilter(req);
 
   if (canSeeFull(req.user)) {
     const all = await ClearanceRequest.find(searchFilter).sort({ createdAt: -1 });
@@ -394,18 +430,29 @@ router.post(
       return res.status(409).json({ error: "This department has already signed" });
     }
 
+    const notes = typeof req.body.notes === "string" ? req.body.notes.trim() : "";
+    if (dept.hasOversightDashboard && notes.length > NOTES_MAX_LENGTH) {
+      return res.status(400).json({ error: `'notes' must be ${NOTES_MAX_LENGTH} characters or fewer` });
+    }
+
     const passwordOk = await verifyPassword(req.user.userID, password);
     if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
     dept.status = "completed";
     dept.signedByUserID = req.user.userID;
     dept.signedByFullName = req.user.fullName;
+    dept.signedByLandlineNumber = req.user.landlineNumber;
     dept.signedAt = new Date();
     dept.evidence = {
       fileUrl: `${request._id}/${req.file.filename}`,
       mimeType: req.file.mimetype,
       originalName: req.file.originalname,
     };
+    // Only wages/finance show a notes field on the frontend and only they
+    // have a box position on the composited PDF (see clearancePdf.js) -- a
+    // note submitted for any other department is silently dropped rather
+    // than stored somewhere it can never be displayed.
+    if (dept.hasOversightDashboard) dept.notes = notes;
 
     // Signing never completes the request by itself -- see
     // computeOverallStatus. This only ever flips back to "in_progress" here
@@ -461,6 +508,7 @@ router.post(
     item.status = "completed";
     item.signedByUserID = req.user.userID;
     item.signedByFullName = req.user.fullName;
+    item.signedByLandlineNumber = req.user.landlineNumber;
     item.signedAt = new Date();
     item.evidence = {
       fileUrl: `${request._id}/${req.file.filename}`,
@@ -488,6 +536,7 @@ function clearSignature(target) {
   target.status = "pending";
   target.signedByUserID = null;
   target.signedByFullName = null;
+  target.signedByLandlineNumber = null;
   target.signedAt = null;
   target.evidence = null;
 }
@@ -686,6 +735,42 @@ router.post("/:id/revoke-access", requireAuth, requireRole("reviewer"), asyncHan
   await request.save();
 
   res.json(redactToOwnDepartment(request, req.user));
+}));
+
+/**
+ * FILE MANAGEMENT: permanently delete a FULLY COMPLETED clearance request --
+ * e.g. the employee came back to the company after already being cleared and
+ * access-revoked, so the record should stop existing rather than sit around
+ * reading as "completed" for someone who's actively working again (2026-08-11,
+ * Nader). Gated on `status === "completed"` -- this is specifically for
+ * reverting a finalized clearance decision, not a general-purpose way to
+ * cancel a request that's still mid-flight (an earlier version of this route
+ * allowed deleting at any stage; that read as a bug in the UI, since a
+ * request like "all 13 signed, awaiting IT" would show a delete button while
+ * still actively in progress). This is a real hard delete: the MongoDB
+ * document AND its uploaded evidence directory
+ * (backend/uploads/<requestId>/) are both removed, unrecoverable -- there is
+ * no soft-delete/archive flag anywhere in this schema. Any File Management
+ * account can do this, same "any account, not just the creator" rule as
+ * reopen.
+ */
+router.post("/:id/delete", requireAuth, requireRole("file_management"), asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: "'password' is required" });
+
+  const request = await ClearanceRequest.findById(req.params.id);
+  if (!request) return res.status(404).json({ error: "Not found" });
+  if (request.status !== "completed") {
+    return res.status(400).json({ error: "Only a fully completed request (access already revoked) can be deleted" });
+  }
+
+  const passwordOk = await verifyPassword(req.user.userID, password);
+  if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
+
+  await fs.promises.rm(path.join(UPLOAD_ROOT, request._id.toString()), { recursive: true, force: true });
+  await ClearanceRequest.findByIdAndDelete(request._id);
+
+  res.json({ deleted: true });
 }));
 
 // Streams a stored evidence file. Oversight reviewers and the department

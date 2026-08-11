@@ -4,8 +4,30 @@ const { PNG } = require("pngjs");
 const jpeg = require("jpeg-js");
 const { createCanvas } = require("@napi-rs/canvas");
 const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
+const fontkit = require("@pdf-lib/fontkit");
 
 const TEMPLATE_PATH = path.resolve(__dirname, "../../assets/clearance-form-template.pdf");
+// Standard PDF fonts (Helvetica, used for the "الاسم" column below) have no
+// Arabic glyphs at all -- this is a real TTF (decompressed once from
+// frontend/public/fonts/cairo-var-arabic.woff2 via the `wawoff2` package,
+// since pdf-lib/fontkit failed to parse the woff2 container directly, even
+// though fontkit can read it fine for other purposes -- see git history if
+// that font is ever replaced) purely so the fixed "خالي الطرف" text below has
+// a font that can render it. fontkit (registered below) shapes Arabic
+// contextual letterforms automatically when drawing through a custom
+// embedded font like this one -- pdf-lib's standard-font path doesn't do
+// that, but this path does.
+const ARABIC_FONT_PATH = path.resolve(__dirname, "../../assets/cairo-arabic.ttf");
+// cairo-arabic.ttf was subset down to exactly what the fixed "خالي الطرف"
+// stamp needed -- Arabic letters, Arabic-Indic digits, a space -- and
+// nothing else: no Western digits, no Latin letters, no ASCII punctuation
+// (not even a period or comma). That's too narrow for the free-text
+// department notes below (see drawNotesBox), which can contain any of
+// those. This is the sibling Latin subset from the same font family
+// (decompressed the same way, from frontend/public/fonts/cairo-var-latin.woff2)
+// -- drawNotesBox splits note text into runs and picks whichever of the two
+// fonts actually covers each run (see splitIntoFontRuns).
+const LATIN_FONT_PATH = path.resolve(__dirname, "../../assets/cairo-latin.ttf");
 const UPLOAD_ROOT = path.resolve(__dirname, "../../uploads");
 
 // pdfjs-dist ships ESM-only (no CommonJS build) as of v6 -- loaded via a
@@ -102,15 +124,61 @@ for (let i = 1; i <= 13; i++) {
   ROWS[i] = { yTop, yBottom: yTop - ROW_HEIGHT };
 }
 
-// Only the name and signature columns are used -- the reviewer who signed
-// off goes in the left ("الاسم") column on every signed row (this is a
-// signer's-name column on the real paper form, not a repeat of whose
-// clearance it is), the evidence photo goes in the middle ("التوقيع")
-// column, and the right ("البيان") column is deliberately left blank.
+// The reviewer who signed off goes in the left ("الاسم") column on every
+// signed row (this is a signer's-name column on the real paper form, not a
+// repeat of whose clearance it is), the evidence photo goes in the middle
+// ("التوقيع") column, and the right ("البيان") column gets a fixed "خالي
+// الطرف" stamp (2026-08-11) so the row reads as a complete, filled-out
+// clearance line rather than leaving that cell blank next to a signature.
+// statement.x/width derived the same way as the other two -- see the
+// coordinate-derivation comment above (render at 300 DPI, find the vertical
+// grid lines flanking it).
 const COLUMNS = {
   name: { x: 90.24, width: 186.6 - 90.24 },
   signature: { x: 186.6, width: 283.56 - 186.6 },
+  statement: { x: 283.56, width: 351.24 - 283.56 },
 };
+
+const STATEMENT_TEXT = "خالي الطرف";
+
+/**
+ * Wages/Finance's optional per-department remark (see requestDepartmentSchema
+ * `notes`) renders in the blank strip below the table, between the
+ * pre-printed "يعتمد," line and the pre-printed name near the page's bottom
+ * corner -- both fixed parts of the template itself, not something this file
+ * draws. Derived the same way as ROWS/COLUMNS above (render at 300 DPI, find
+ * text bounding boxes): "يعتمد," bottoms out around y=152pt and the bottom
+ * name starts around y=45pt, leaving roughly a 100pt-tall strip. Keyed by
+ * `order` rather than department key, same reasoning as ROWS -- this is a
+ * position on the paper form, not a fact about which department it is; it
+ * only happens to have entries for 12/13 today because those are the only
+ * two hasOversightDashboard departments in the current form.
+ *
+ * The box is right-anchored (NOTES_BOX_RIGHT_X, matching the table's own
+ * right border) and grows LEFTWARD as a note gets longer -- see
+ * chooseNotesLayout below -- rather than shrinking its font size right away:
+ * NOTES_BOX_DEFAULT_WIDTH matches the table's rightmost two columns (today's
+ * fixed size, for a short note), and it can widen up to NOTES_BOX_MAX_WIDTH,
+ * which reaches COLUMNS.name.x -- the table's own left inner edge -- so an
+ * expanded box still reads as sitting "under" the table, never past it into
+ * the page's own margin.
+ */
+const NOTES_BOX_RIGHT_X = 538.56;
+const NOTES_BOX_DEFAULT_WIDTH = 538.56 - 283.56;
+const NOTES_BOX_MAX_WIDTH = 538.56 - COLUMNS.name.x;
+const NOTES_BOX_BY_ORDER = {
+  12: { yTop: 147, yBottom: 102 },
+  13: { yTop: 94, yBottom: 49 },
+};
+const NOTES_BOX_PADDING = 5;
+const NOTES_LABEL_SIZE = 7.5;
+const NOTES_TEXT_MAX_SIZE = 8;
+const NOTES_TEXT_MIN_SIZE = 6;
+const NOTES_LINE_HEIGHT_RATIO = 1.2;
+// How coarsely chooseNotesLayout searches for a fitting width -- small
+// enough that the box doesn't visibly jump in size, large enough that the
+// search stays cheap for a ≤NOTES_MAX_LENGTH-character note.
+const NOTES_BOX_WIDTH_STEP = 8;
 
 const CELL_PADDING = 6;
 const IMAGE_PADDING = 2;
@@ -303,6 +371,303 @@ function drawCellText(page, font, text, column, row, { size = 11 } = {}) {
   });
 }
 
+// Cheap, synchronous, and independent of any particular PDFDocument (unlike
+// pdf-lib's own embedFont, which is async and per-document) -- just a glyph
+// coverage lookup, so it's built once per process rather than once per PDF.
+let notesFontCoverage = null;
+function getNotesFontCoverage() {
+  if (!notesFontCoverage) {
+    notesFontCoverage = {
+      arabic: fontkit.create(fs.readFileSync(ARABIC_FONT_PATH)),
+      latin: fontkit.create(fs.readFileSync(LATIN_FONT_PATH)),
+    };
+  }
+  return notesFontCoverage;
+}
+
+function fontFor(name, arabicFont, latinFont) {
+  return name === "latin" ? latinFont : arabicFont;
+}
+
+// Splits one whitespace-free token into runs of consecutive characters
+// coverable by the same one of the two embedded fonts -- e.g. a note like
+// "بقيمة 1500 جنيه" needs the Arabic font for the words and the Latin subset
+// font for "1500" (see the LATIN_FONT_PATH comment above for why). Runs stay
+// in their original typed order; drawNotesBox below draws each word's runs
+// left-to-right within the word but places words themselves right-to-left,
+// which reproduces correct bidi placement for the common case (Arabic text
+// with embedded numbers/Latin words) without needing a full bidi
+// implementation. A character neither font covers (rare -- e.g. an emoji)
+// falls back to the Arabic font, same as if this splitting didn't exist.
+function splitIntoFontRuns(token, coverage) {
+  const runs = [];
+  let current = "";
+  let currentFont = null;
+  for (const ch of token) {
+    const codePoint = ch.codePointAt(0);
+    let font;
+    // Latin checked first, deliberately: cairo-arabic.ttf's subsetting left
+    // in a handful of stray Latin-range glyphs it never needed for its one
+    // original use ("خالي الطرف") -- 'A'/'Á'/'Ă'/NBSP among them -- so
+    // checking Arabic coverage first would misroute an ordinary English word
+    // starting with "A" (e.g. "Approved") onto the Arabic font for its first
+    // character alone, splitting it into two runs and, worse, making
+    // groupWordsIntoBlocks below treat the whole word as Arabic-primary and
+    // reorder it along with actual Arabic words.
+    if (codePoint === 0x20) font = currentFont;
+    else if (coverage.latin.hasGlyphForCodePoint(codePoint)) font = "latin";
+    else if (coverage.arabic.hasGlyphForCodePoint(codePoint)) font = "arabic";
+    else font = currentFont || "arabic";
+
+    if (currentFont === null) currentFont = font;
+    if (font !== currentFont) {
+      runs.push({ text: current, font: currentFont });
+      current = "";
+      currentFont = font;
+    }
+    current += ch;
+  }
+  if (current) runs.push({ text: current, font: currentFont || "arabic" });
+  return runs;
+}
+
+function measureRuns(runs, size, arabicFont, latinFont) {
+  return runs.reduce((sum, run) => sum + fontFor(run.font, arabicFont, latinFont).widthOfTextAtSize(run.text, size), 0);
+}
+
+// A single whitespace-free token (already split into per-font runs) normally
+// becomes one "word" -- but a token with no whitespace to break on (a long
+// reference number, a phone number typed without spaces, a URL) can still be
+// wider than the box on its own, and wrapNotesText's word-boundary-only
+// wrapping has nowhere to break it. As a last resort, force-split it
+// character by character wherever it stops fitting `maxWidth`, so it's
+// clipped to as many lines as it needs instead of being drawn straight
+// through the box's border. Every chunk after the first is marked
+// `glued: true` -- they're fragments of one token, not separate words, so
+// nothing (wrapNotesText's line-width accounting, groupWordsIntoBlocks,
+// drawNotesBox) should ever put a space before them.
+function chunkWord(runs, maxWidth, size, arabicFont, latinFont) {
+  const width = measureRuns(runs, size, arabicFont, latinFont);
+  if (width <= maxWidth) return [{ runs, width, glued: false }];
+
+  const chunks = [];
+  let currentRuns = [];
+  let currentWidth = 0;
+  function flush() {
+    if (currentRuns.length === 0) return;
+    chunks.push({ runs: currentRuns, width: currentWidth, glued: chunks.length > 0 });
+    currentRuns = [];
+    currentWidth = 0;
+  }
+  for (const run of runs) {
+    const font = fontFor(run.font, arabicFont, latinFont);
+    for (const ch of run.text) {
+      const chWidth = font.widthOfTextAtSize(ch, size);
+      if (currentRuns.length > 0 && currentWidth + chWidth > maxWidth) flush();
+      const lastRun = currentRuns[currentRuns.length - 1];
+      if (lastRun && lastRun.font === run.font) lastRun.text += ch;
+      else currentRuns.push({ text: ch, font: run.font });
+      currentWidth += chWidth;
+    }
+  }
+  flush();
+  return chunks;
+}
+
+// Greedy word-wrap (whitespace only, no mid-word breaks under normal
+// circumstances -- same approach as drawCellText above), except each "word"
+// is measured as a sequence of per-font runs (see splitIntoFontRuns) rather
+// than a single string in one font, and a token too wide to ever fit on its
+// own gets force-split by chunkWord above.
+function wrapNotesText(text, size, maxWidth, arabicFont, latinFont, coverage) {
+  const words = text
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .flatMap((token) => chunkWord(splitIntoFontRuns(token, coverage), maxWidth, size, arabicFont, latinFont));
+  const spaceWidth = arabicFont.widthOfTextAtSize(" ", size);
+
+  const lines = [];
+  let current = [];
+  let currentWidth = 0;
+  for (const word of words) {
+    const gap = word.glued ? 0 : spaceWidth;
+    const candidateWidth = current.length ? currentWidth + gap + word.width : word.width;
+    if (current.length && candidateWidth > maxWidth) {
+      lines.push(current);
+      current = [word];
+      currentWidth = word.width;
+    } else {
+      current.push(word);
+      currentWidth = candidateWidth;
+    }
+  }
+  if (current.length) lines.push(current);
+  return lines;
+}
+
+// Unlike drawCellText's fixed short strings (a signer's first two name parts,
+// or the constant "خالي الطرف"), a note is free text of unpredictable length
+// -- this wraps to as many lines as it takes, shrinking the font until it
+// fits within `maxHeight`, and only truncates (with an ellipsis) if it's
+// still too long at the smallest readable size. NOTES_MAX_LENGTH in
+// request.routes.js keeps this from being reached in practice; chunkWord
+// above keeps a single unbroken token from overflowing `maxWidth` even so.
+function fitNotesText(text, maxWidth, maxHeight, arabicFont, latinFont) {
+  const coverage = getNotesFontCoverage();
+  let size = NOTES_TEXT_MAX_SIZE;
+  let lines = wrapNotesText(text, size, maxWidth, arabicFont, latinFont, coverage);
+  while (size > NOTES_TEXT_MIN_SIZE && lines.length * size * NOTES_LINE_HEIGHT_RATIO > maxHeight) {
+    size -= 0.5;
+    lines = wrapNotesText(text, size, maxWidth, arabicFont, latinFont, coverage);
+  }
+
+  const lineHeight = size * NOTES_LINE_HEIGHT_RATIO;
+  const maxLines = Math.max(1, Math.floor(maxHeight / lineHeight));
+  if (lines.length > maxLines) {
+    lines = lines.slice(0, maxLines);
+    // Ellipsis replaces the last run's trailing character (rather than being
+    // appended as its own token) so it stays part of the last word instead
+    // of becoming an orphaned always-Arabic-font run.
+    const lastWord = lines[maxLines - 1].at(-1);
+    const lastRun = lastWord.runs.at(-1);
+    lastRun.text = lastRun.text.length > 1 ? `${lastRun.text.slice(0, -1)}…` : "…";
+  }
+  return { lines, size, lineHeight };
+}
+
+// Picks how wide the notes box should render, given its content: tries
+// NOTES_BOX_DEFAULT_WIDTH first at the preferred font size, then widens
+// leftward in NOTES_BOX_WIDTH_STEP increments (the box is right-anchored, so
+// "wider" only ever moves its left edge) looking for the narrowest width
+// that still fits the note at that size, up to NOTES_BOX_MAX_WIDTH. Only
+// once even the max width isn't enough does fitNotesText's own font-shrink
+// (and, as an ultimate fallback, truncation) take over -- growing the box
+// keeps a longer note readable for far longer than shrinking its font would.
+function chooseNotesLayout(text, maxHeight, arabicFont, latinFont) {
+  const coverage = getNotesFontCoverage();
+  const maxLinesAtPreferredSize = Math.max(1, Math.floor(maxHeight / (NOTES_TEXT_MAX_SIZE * NOTES_LINE_HEIGHT_RATIO)));
+  const innerPadding = NOTES_BOX_PADDING * 2;
+
+  function fitsAtPreferredSize(width) {
+    const lines = wrapNotesText(text, NOTES_TEXT_MAX_SIZE, width - innerPadding, arabicFont, latinFont, coverage);
+    return lines.length <= maxLinesAtPreferredSize;
+  }
+
+  let width = NOTES_BOX_DEFAULT_WIDTH;
+  while (width < NOTES_BOX_MAX_WIDTH && !fitsAtPreferredSize(width)) {
+    width = Math.min(NOTES_BOX_MAX_WIDTH, width + NOTES_BOX_WIDTH_STEP);
+  }
+
+  const fitted = fitNotesText(text, width - innerPadding, maxHeight, arabicFont, latinFont);
+  return { width, ...fitted };
+}
+
+// A lone word placed by which of its own runs happens to come first --
+// good enough to tell "بقيمة" from "1500" from "Approved". Used only to
+// group adjacent words for groupWordsIntoBlocks below.
+function primaryFont(word) {
+  return word.runs[0] ? word.runs[0].font : "arabic";
+}
+
+// Groups a wrapped line's words into maximal runs of matching primaryFont --
+// e.g. "تمت المراجعة - Approved by Finance on 2026-08-11" (Arabic words, an
+// English sentence, and a date) becomes an Arabic block and one Latin block,
+// not six independently-reversed words. Needed because a line is drawn
+// right-to-left block by block (first-typed block rightmost, matching how
+// Arabic text and a lone embedded number already read), but an entire
+// multi-word LATIN block must keep its OWN words in normal left-to-right
+// order internally -- without this grouping, "Approved by Finance" would
+// draw as "Finance by Approved" (each word individually treated as an
+// RTL-ordered unit, which is only correct for Arabic words). A `glued` word
+// (a chunkWord fragment) always joins the previous block regardless of font,
+// since it's part of the same unbroken token, not a new word.
+function groupWordsIntoBlocks(line, spaceWidth) {
+  const blocks = [];
+  for (const word of line) {
+    const font = primaryFont(word);
+    const last = blocks[blocks.length - 1];
+    if (last && (last.font === font || word.glued)) {
+      last.words.push(word);
+      last.width += (word.glued ? 0 : spaceWidth) + word.width;
+    } else {
+      blocks.push({ font, words: [word], width: word.width });
+    }
+  }
+  return blocks;
+}
+
+// Draws one bordered notes box -- a small right-aligned department label
+// above the wrapped note text. Only called for a department that actually
+// has a note (see the empty-notes skip in generateClearancePdf) -- "no
+// notes" means this never runs at all, not an empty box. Width is chosen by
+// chooseNotesLayout (grows leftward from box.rightX for a longer note); only
+// the vertical extent is fixed, from NOTES_BOX_BY_ORDER.
+function drawNotesBox(page, arabicFont, latinFont, box, label, notes) {
+  const { yTop, yBottom } = box;
+  const color = rgb(0.12, 0.18, 0.16);
+  const labelWidth = arabicFont.widthOfTextAtSize(label, NOTES_LABEL_SIZE);
+  const labelY = yTop - NOTES_BOX_PADDING - NOTES_LABEL_SIZE;
+  const textTop = labelY - 3;
+  const textMaxHeight = textTop - yBottom - NOTES_BOX_PADDING;
+
+  const { width, lines, size, lineHeight } = chooseNotesLayout(notes, textMaxHeight, arabicFont, latinFont);
+  const x = NOTES_BOX_RIGHT_X - width;
+
+  page.drawRectangle({ x, y: yBottom, width, height: yTop - yBottom, borderColor: color, borderWidth: 0.75 });
+
+  const innerX = x + NOTES_BOX_PADDING;
+  const innerWidth = width - NOTES_BOX_PADDING * 2;
+  page.drawText(label, { x: innerX + innerWidth - labelWidth, y: labelY, size: NOTES_LABEL_SIZE, font: arabicFont, color });
+
+  const spaceWidth = arabicFont.widthOfTextAtSize(" ", size);
+
+  function drawRun(run, runX, y) {
+    const runFont = fontFor(run.font, arabicFont, latinFont);
+    page.drawText(run.text, { x: runX, y, size, font: runFont, color });
+    return runFont.widthOfTextAtSize(run.text, size);
+  }
+
+  lines.forEach((line, lineIndex) => {
+    const y = textTop - (lineIndex + 1) * lineHeight;
+    const blocks = groupWordsIntoBlocks(line, spaceWidth);
+    let cursor = innerX + innerWidth; // right edge -- first-typed block goes here
+    blocks.forEach((block) => {
+      if (block.font === "latin") {
+        // An embedded LTR run (English phrase, a run of digits) reads
+        // left-to-right internally even though it sits inside an RTL
+        // paragraph -- draw its words left-to-right from the block's own
+        // left edge, same as normal English text. Glued words (chunkWord
+        // fragments) get no gap before them -- they're one token split for
+        // width, not separate words.
+        let wordX = cursor - block.width;
+        block.words.forEach((word, i) => {
+          let runX = wordX;
+          word.runs.forEach((run) => {
+            runX += drawRun(run, runX, y);
+          });
+          const next = block.words[i + 1];
+          wordX += word.width + (next && !next.glued ? spaceWidth : 0);
+        });
+      } else {
+        // Arabic block: words (and their internal runs) flow right-to-left,
+        // first-typed word rightmost -- matches how "يعتمد" and the "الاسم"
+        // column already render via drawCellText above.
+        let wordRight = cursor;
+        block.words.forEach((word, i) => {
+          let runX = wordRight - word.width;
+          word.runs.forEach((run) => {
+            runX += drawRun(run, runX, y);
+          });
+          const next = block.words[i + 1];
+          wordRight -= word.width + (next && !next.glued ? spaceWidth : 0);
+        });
+      }
+      cursor -= block.width + spaceWidth;
+    });
+  });
+}
+
 /**
  * Composites whatever signature evidence a request has collected so far
  * onto the master paper-form template. Safe to call on a partially-signed
@@ -312,8 +677,11 @@ function drawCellText(page, font, text, column, row, { size = 11 } = {}) {
 async function generateClearancePdf(request) {
   const templateBytes = fs.readFileSync(TEMPLATE_PATH);
   const pdfDoc = await PDFDocument.load(templateBytes);
+  pdfDoc.registerFontkit(fontkit);
   const page = pdfDoc.getPages()[0];
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const arabicFont = await pdfDoc.embedFont(fs.readFileSync(ARABIC_FONT_PATH));
+  const latinFont = await pdfDoc.embedFont(fs.readFileSync(LATIN_FONT_PATH));
 
   for (const dept of request.departments) {
     const row = ROWS[dept.order];
@@ -347,6 +715,20 @@ async function generateClearancePdf(request) {
     // generator, but the "الاسم" column next to each department's row is a
     // signer-name column on the real form.
     drawCellText(page, font, signerNameForPdf(signerName), COLUMNS.name, row);
+    // Every signed row gets the same fixed "خالي الطرف" stamp -- this column
+    // isn't per-department commentary, just a completed/blank marker, so
+    // there's nothing to vary row to row.
+    drawCellText(page, arabicFont, STATEMENT_TEXT, COLUMNS.statement, row);
+
+    // Wages/Finance's optional remark (see requestDepartmentSchema `notes`)
+    // -- reached only for a completed row (single-mode's `continue` above
+    // already skipped anything still pending), so reopening a department
+    // makes its note disappear along with the rest of its row, same as
+    // evidence does, until it's re-signed.
+    if (dept.hasOversightDashboard && dept.notes) {
+      const notesBox = NOTES_BOX_BY_ORDER[dept.order];
+      if (notesBox) drawNotesBox(page, arabicFont, latinFont, notesBox, `ملاحظات ${dept.name_ar}`, dept.notes);
+    }
   }
 
   return Buffer.from(await pdfDoc.save());

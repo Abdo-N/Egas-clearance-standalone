@@ -8,6 +8,7 @@ import { REASONS, reasonI18nKey } from "../utils/leavingReason";
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const REASON_KEYS = REASONS;
 const OVERDUE_DAYS = 7;
+const UPCOMING_DAYS = 7;
 const RECENT_LIMIT = 8;
 const TOP_EMPLOYEE_DEPTS = 8;
 
@@ -39,6 +40,13 @@ function lastNMonthKeys(n) {
 
 function ownDeptOf(request, departmentKey) {
   return request.departments.find((d) => d.departmentKey === departmentKey);
+}
+
+function isDueSoon(request, now = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const lastDay = new Date(request.lastWorkingDay);
+  const daysUntil = (lastDay - today) / MS_PER_DAY;
+  return daysUntil >= 0 && daysUntil <= UPCOMING_DAYS;
 }
 
 // Which real EGAS department the employees going through clearance actually
@@ -88,6 +96,7 @@ function computeOwnStats(requests, departmentKey) {
   const overdueCount = pendingEntries.filter(
     (e) => (now - new Date(e.request.createdAt)) / MS_PER_DAY > OVERDUE_DAYS
   ).length;
+  const dueSoonCount = pendingEntries.filter((e) => isDueSoon(e.request, now)).length;
 
   const turnarounds = completedEntries
     .map((e) => {
@@ -121,6 +130,7 @@ function computeOwnStats(requests, departmentKey) {
     completedCount: completedEntries.length,
     pendingCount: pendingEntries.length,
     overdueCount,
+    dueSoonCount,
     avgTurnaround,
     byReason,
     monthKeys,
@@ -128,22 +138,6 @@ function computeOwnStats(requests, departmentKey) {
     byEmployeeDept: employeeDeptBreakdown(entries.map((e) => e.request)),
     recent,
   };
-}
-
-// IT-only: which of the 5 itemized checklist items tends to lag, aggregated
-// across every request that has reached IT.
-function computeItemStats(requests) {
-  const items = {};
-  requests.forEach((r) => {
-    const dept = ownDeptOf(r, "it");
-    if (!dept || dept.signatureMode !== "itemized") return;
-    dept.items.forEach((i) => {
-      if (!items[i.key]) items[i.key] = { label_ar: i.label_ar, label_en: i.label_en, total: 0, completed: 0 };
-      items[i.key].total += 1;
-      if (i.status === "completed") items[i.key].completed += 1;
-    });
-  });
-  return items;
 }
 
 // Oversight (wages/finance) reviewers get the un-redacted `departments[]` on
@@ -157,6 +151,7 @@ function computeCompanyStats(requests) {
   const overdueCount = requests.filter(
     (r) => r.status !== "completed" && (now - new Date(r.createdAt)) / MS_PER_DAY > OVERDUE_DAYS
   ).length;
+  const dueSoonCount = requests.filter((r) => r.status !== "completed" && isDueSoon(r, now)).length;
   const turnarounds = completed
     .filter((r) => r.completedAt)
     .map((r) => (new Date(r.completedAt) - new Date(r.createdAt)) / MS_PER_DAY);
@@ -197,6 +192,7 @@ function computeCompanyStats(requests) {
     completedCount: completed.length,
     inProgressCount: requests.length - completed.length,
     overdueCount,
+    dueSoonCount,
     avgTurnaround,
     byReason,
     monthKeys,
@@ -288,6 +284,7 @@ function StatusPie({ title, segments, surfaceColor }) {
 
 function CategoryBarChart({ title, rows, lockedColor }) {
   const height = Math.max(140, rows.length * 34);
+  const shortenLabel = (label) => label.length > 22 ? `${label.slice(0, 20)}…` : label;
   return (
     <div className="egas-chart-card">
       <p className="egas-chart-card-title">{title}</p>
@@ -295,7 +292,13 @@ function CategoryBarChart({ title, rows, lockedColor }) {
         <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={lockedColor} opacity={0.15} horizontal={false} />
           <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10, fill: "var(--ink-700)" }} />
-          <YAxis type="category" dataKey="label" width={110} tick={{ fontSize: 11, fill: "var(--ink-700)" }} />
+          <YAxis
+            type="category"
+            dataKey="label"
+            width={135}
+            tickFormatter={shortenLabel}
+            tick={{ fontSize: 11, fill: "var(--ink-700)" }}
+          />
           <Tooltip content={<ChartTooltip />} />
           <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={18}>
             {rows.map((r) => (
@@ -314,7 +317,6 @@ export default function DepartmentDashboard({ requests, user }) {
   const colors = CHART_COLORS[theme] || CHART_COLORS.light;
   const isAr = i18n.language === "ar";
   const isOversight = Boolean(user.hasOversightDashboard);
-  const isIT = user.departmentKey === "it";
   const isFileManagement = user.role === "file_management";
   // Oversight reviewers (Wages/Finance) and File Management both already see
   // every one of a request's 13 departments (full detail for oversight, a
@@ -327,25 +329,51 @@ export default function DepartmentDashboard({ requests, user }) {
     () => (useCompanyStats ? null : computeOwnStats(requests, user.departmentKey)),
     [requests, user.departmentKey, useCompanyStats]
   );
-  const itemStats = useMemo(() => (isIT ? computeItemStats(requests) : null), [requests, isIT]);
   const companyStats = useMemo(() => (useCompanyStats ? computeCompanyStats(requests) : null), [requests, useCompanyStats]);
 
   const stats = useCompanyStats ? companyStats : ownStats;
   if (!stats || requests.length === 0) return null;
 
+  const ringPct = stats.total > 0 ? Math.round((stats.completedCount / stats.total) * 100) : 0;
+
+  // Ordinary reviewers only need an at-a-glance view of their own queue.
+  // Company-wide charts remain exclusive to oversight and File Management.
+  if (!useCompanyStats) {
+    const outstandingCount = Math.max(0, stats.total - stats.completedCount);
+    return (
+      <div className="egas-dashboard egas-dashboard--simple">
+        <h3 className="egas-dashboard-heading">{t("reviewer.dashboardDepartmentOverview")}</h3>
+        <div className="detail-stat-row department-summary-stats">
+          <StatTile value={stats.total} label={t("reviewer.dashboardTotal")} />
+          <StatTile value={stats.completedCount} label={t("reviewer.dashboardCompleted")} tone="completed" />
+          <StatTile value={outstandingCount} label={t("reviewer.dashboardOutstanding")} tone="pending" />
+          <StatTile value={stats.pendingCount} label={t("reviewer.dashboardPending")} tone="pending" />
+          <StatTile value={stats.dueSoonCount} label={t("reviewer.dashboardDueSoon")} tone={stats.dueSoonCount > 0 ? "overdue" : undefined} />
+        </div>
+        <div className="department-completion-summary">
+          <div>
+            <span>{t("reviewer.dashboardCompletionRate")}</span>
+            <strong>{ringPct}%</strong>
+          </div>
+          <div className="department-completion-track" aria-hidden="true">
+            <span style={{ width: `${ringPct}%` }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const reasonRows = REASON_KEYS.map((key) => ({
     label: t(`employee.${reasonI18nKey(key)}`),
     value: stats.byReason[key],
     color: colors.approved,
-  }));
+  })).filter((row) => row.value > 0);
 
   const monthRows = stats.monthKeys.map((key) => ({
     label: monthLabel(key, i18n.language),
     value: stats.monthly[key],
     color: colors.pending,
   }));
-
-  const ringPct = stats.total > 0 ? Math.round((stats.completedCount / stats.total) * 100) : 0;
 
   return (
     <div className="egas-dashboard">
@@ -371,6 +399,7 @@ export default function DepartmentDashboard({ requests, user }) {
           label={t("reviewer.dashboardAvgTurnaround")}
         />
         <StatTile value={stats.overdueCount} label={t("reviewer.dashboardOverdue")} tone={stats.overdueCount > 0 ? "overdue" : undefined} />
+        <StatTile value={stats.dueSoonCount} label={t("reviewer.dashboardDueSoon")} tone={stats.dueSoonCount > 0 ? "pending" : undefined} />
       </div>
 
       <div className="egas-chart-grid">
@@ -385,7 +414,7 @@ export default function DepartmentDashboard({ requests, user }) {
         <StatusPie
           title={t("reviewer.dashboardStatusBreakdown")}
           surfaceColor={colors.surface}
-          segments={
+          segments={(
             useCompanyStats
               ? [
                   { key: "completed", label: t("reviewer.dashboardOverallCompleted"), value: stats.completedCount, color: colors.approved },
@@ -401,23 +430,11 @@ export default function DepartmentDashboard({ requests, user }) {
                     color: colors.locked,
                   },
                 ]
-          }
+          ).filter((segment) => segment.value > 0)}
         />
 
         <CategoryBarChart title={t("reviewer.dashboardReasonBreakdown")} rows={reasonRows} lockedColor={colors.locked} />
         <CategoryBarChart title={t("reviewer.dashboardMonthlyTrend")} rows={monthRows} lockedColor={colors.locked} />
-
-        {isIT && itemStats && (
-          <CategoryBarChart
-            title={t("reviewer.dashboardItemBreakdown")}
-            lockedColor={colors.locked}
-            rows={Object.values(itemStats).map((i) => ({
-              label: isAr ? i.label_ar : i.label_en,
-              value: i.completed,
-              color: colors.approved,
-            }))}
-          />
-        )}
 
         {useCompanyStats && (
           <>
@@ -463,17 +480,19 @@ export default function DepartmentDashboard({ requests, user }) {
               {stats.recent.map((entry) => {
                 const request = useCompanyStats ? entry : entry.request;
                 const dept = useCompanyStats ? null : entry.dept;
-                const status = useCompanyStats ? request.status : dept.status;
+                const isCompleted = useCompanyStats ? request.status === "completed" : dept.status === "completed";
                 return (
                   <li key={request._id} className="activity-list-row">
                     <span className="activity-list-employee">
                       <strong>{request.employeeFullName}</strong>
                       <small>{t(`employee.${reasonI18nKey(request.reason)}`)}</small>
                     </span>
-                    <span className={`status-pill ${status === "completed" ? "completed" : "pending"}`}>
-                      {status === "completed" ? t("employee.departmentCompleted") : t("employee.departmentPending")}
+                    <span className={`status-pill ${isCompleted ? "completed" : "pending"}`}>
+                      {useCompanyStats
+                        ? (isCompleted ? t("reviewer.dashboardOverallCompleted") : t("reviewer.dashboardOverallInProgress"))
+                        : (isCompleted ? t("reviewer.dashboardCompleted") : t("reviewer.dashboardPending"))}
                     </span>
-                    {request.accessRevoked && (isIT || useCompanyStats) && (
+                    {request.accessRevoked && (
                       <span className="status-pill archived">{t("common.accessRevokedBadge")}</span>
                     )}
                     <small className="activity-list-date">

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
+import client from "../api/client";
 import SupportModal from "../components/SupportModal";
 import LanguageToggle from "../components/LanguageToggle";
 import PasswordInput from "../components/PasswordInput";
@@ -26,6 +27,11 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [itContacts, setItContacts] = useState([]);
+
+  useEffect(() => {
+    client.get("/auth/it-contacts").then(({ data }) => setItContacts(data));
+  }, []);
 
   function fillDemoAccount(account) {
     setEmail(account.email);
@@ -51,7 +57,11 @@ export default function Login() {
     setLoading(true);
     try {
       const user = await login(email, password);
-      navigate(user.role === "file_management" ? "/file-management" : "/reviewer");
+      if (user.mustResetPassword) {
+        navigate("/set-new-password");
+      } else {
+        navigate(user.role === "file_management" ? "/file-management" : "/reviewer");
+      }
     } catch (err) {
       setError(t("login.error") || "اسم المستخدم أو كلمة المرور غير صحيحة");
     } finally {
@@ -60,7 +70,7 @@ export default function Login() {
   }
 
   return (
-    <div
+    <div className="auth-page"
       style={{
         minHeight: "100vh",
         width: "100vw",
@@ -73,7 +83,7 @@ export default function Login() {
     >
       {/* طبقة الخلفية -- ثابتة بحجم الشاشة، منفصلة عن ارتفاع المحتوى حتى لا
           "تكبر" الصورة عند تمدد بطاقة تسجيل الدخول (مثلاً فتح حسابات الديمو) */}
-      <div
+      <div className="auth-page-background"
         style={{
           position: "fixed",
           inset: 0,
@@ -87,7 +97,7 @@ export default function Login() {
 
       {/* كارت تسجيل الدخول الأبيض النظيف والمتسنتر بدقة */}
       <div
-        className="login-card"
+        className="login-card auth-card"
         style={{
           backgroundColor: "#f4f5f6",
           width: "100%",
@@ -185,7 +195,7 @@ export default function Login() {
           {/* زر تسجيل الدخول */}
           <button
             type="submit"
-            className="login-submit-btn"
+            className="login-submit-btn auth-submit"
             disabled={loading}
             style={{
               width: "100%",
@@ -202,6 +212,28 @@ export default function Login() {
             {loading ? t("employee.submitting") : t("login.submit")}
           </button>
         </form>
+
+        <details className="login-demo-accounts">
+          <summary>{t("login.forgotPassword.toggle")}</summary>
+          <p className="demo-accounts-hint">{t("login.forgotPassword.hint")}</p>
+          {itContacts.length === 0 ? (
+            <p className="demo-accounts-hint">{t("login.forgotPassword.empty")}</p>
+          ) : (
+            <div className="demo-accounts-list">
+              {itContacts.map((contact) => (
+                <div className="it-contact-row" key={contact.userID}>
+                  <span className="demo-account-identity">
+                    <strong>{isArabic ? contact.fullName_ar || contact.fullName : contact.fullName}</strong>
+                  </span>
+                  <span className="it-contact-links">
+                    <a href={`mailto:${contact.userID}`}>{contact.userID}</a>
+                    {contact.landlineNumber && <a href={`tel:${contact.landlineNumber}`}>{contact.landlineNumber}</a>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </details>
 
         <details className="login-demo-accounts">
           <summary>{t("login.demoAccounts.summary")}</summary>
@@ -230,7 +262,7 @@ export default function Login() {
         </details>
 
         {/* رابط إنشاء حساب */}
-        <p style={{ margin: "16px 0 0", fontSize: "13px", color: "#666", textAlign: "center" }}>
+        <p className="auth-footer" style={{ margin: "16px 0 0", fontSize: "13px", color: "#666", textAlign: "center" }}>
           {t("login.noAccount")}{" "}
           <Link to="/register" style={{ color: "#008069", fontWeight: "600", textDecoration: "none" }}>
             {t("login.createAccount")}

@@ -1,12 +1,34 @@
 const express = require("express");
+const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Department = require("../models/Department");
 const { isPasswordStrongEnough, MIN_LENGTH } = require("../utils/passwordPolicy");
+const { requireAuth, requireRole } = require("../middleware/auth.middleware");
 const asyncHandler = require("../utils/asyncHandler");
 
 const router = express.Router();
+
+async function verifyPassword(userID, password) {
+  const user = await User.findOne({ userID });
+  if (!user) return false;
+  return bcrypt.compare(password, user.passwordHash);
+}
+
+// Random enough for a credential that's only ever meant to be used once and
+// immediately replaced, and always satisfies isPasswordStrongEnough on its
+// own (12 chars, trailing symbol) so it never has to go through the normal
+// strength check. Excludes visually-ambiguous characters (0/O, 1/l/I) since
+// IT reads this out loud or over an internal phone line to hand it off.
+function generateOneTimePassword() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let code = "";
+  for (let i = 0; i < 11; i++) {
+    code += alphabet[crypto.randomInt(alphabet.length)];
+  }
+  return `${code}!`;
+}
 
 // Login by email + password. `userID` is the underlying field name (kept as
 // unchanged plumbing throughout the codebase -- see User.js) but every
@@ -42,10 +64,13 @@ router.post("/login", asyncHandler(async (req, res) => {
  * is that each IT checklist item can only ever have one owning account.
  */
 router.post("/register", asyncHandler(async (req, res) => {
-  const { email, password, fullName, role, departmentKey, assignedItemKey } = req.body;
+  const { email, password, fullName, role, departmentKey, assignedItemKey, landlineNumber } = req.body;
 
   if (!email || !email.trim() || !fullName || !fullName.trim()) {
     return res.status(400).json({ error: "'email' and 'fullName' are required" });
+  }
+  if (!landlineNumber || !landlineNumber.trim()) {
+    return res.status(400).json({ error: "'landlineNumber' is required" });
   }
   if (!["file_management", "reviewer"].includes(role)) {
     return res.status(400).json({ error: "'role' must be 'file_management' or 'reviewer'" });
@@ -90,6 +115,7 @@ router.post("/register", asyncHandler(async (req, res) => {
     role,
     departmentKey: role === "reviewer" ? departmentKey : null,
     assignedItemKey: role === "reviewer" && department.signatureMode === "itemized" ? assignedItemKey : null,
+    landlineNumber: landlineNumber.trim(),
   });
 
   const payload = await buildTokenPayload(user);
@@ -98,6 +124,23 @@ router.post("/register", asyncHandler(async (req, res) => {
   });
 
   res.status(201).json({ token, user: payload });
+}));
+
+/**
+ * PUBLIC (no auth) -- lets someone locked out of their account find out who
+ * to contact for a one-time password without already having a token, which
+ * is the whole problem. Same "public by necessity" reasoning as
+ * GET /api/departments. Scoped to IT reviewers only, since only IT can issue
+ * a reset (see POST /reset-password below). `landlineNumber` is already
+ * shown to signers throughout the app once a department signs (see
+ * CLAUDE.md), so surfacing it here too isn't a new exposure, just a new
+ * place it's read from.
+ */
+router.get("/it-contacts", asyncHandler(async (req, res) => {
+  const contacts = await User.find({ departmentKey: "it" })
+    .select("fullName fullName_ar userID landlineNumber -_id")
+    .sort({ fullName: 1 });
+  res.json(contacts);
 }));
 
 // Shared by login and register: reviewers get their department's
@@ -124,10 +167,84 @@ async function buildTokenPayload(user) {
     role: user.role,
     departmentKey: user.departmentKey,
     assignedItemKey: user.assignedItemKey,
+    landlineNumber: user.landlineNumber || null,
     hasOversightDashboard,
     departmentName_ar,
     departmentName_en,
+    mustResetPassword: Boolean(user.mustResetPassword),
   };
 }
+
+/**
+ * REVIEWER (IT only): issue any account -- another IT reviewer, a plain
+ * department reviewer, or File Management -- a fresh one-time password when
+ * they've forgotten theirs and can't self-serve a reset (there's no email
+ * infra in this app to send a reset link to, see CLAUDE.md). Re-authenticates
+ * the ACTING IT reviewer's own password first, same re-auth-to-confirm
+ * pattern as every sign/undo/revoke-access route. The plaintext one-time
+ * password is returned only in this response, for IT to hand off directly
+ * (phone call, in person) -- it's never stored anywhere in the clear.
+ * `mustResetPassword` (see User.js) forces the target account to set a real
+ * password on next login before touching anything else.
+ */
+router.post("/reset-password", requireAuth, requireRole("reviewer"), asyncHandler(async (req, res) => {
+  if (req.user.departmentKey !== "it") {
+    return res.status(403).json({ error: "Only IT can reset another account's password" });
+  }
+  const { userID, password } = req.body;
+  if (!userID || !password) {
+    return res.status(400).json({ error: "'userID' and 'password' are required" });
+  }
+
+  const actingPasswordOk = await verifyPassword(req.user.userID, password);
+  if (!actingPasswordOk) return res.status(401).json({ error: "Incorrect password" });
+
+  const targetEmail = userID.trim().toLowerCase();
+  const target = await User.findOne({ userID: targetEmail });
+  if (!target) return res.status(404).json({ error: "No account found with that email" });
+
+  const oneTimePassword = generateOneTimePassword();
+  target.passwordHash = await bcrypt.hash(oneTimePassword, 10);
+  target.mustResetPassword = true;
+  await target.save();
+
+  res.json({ userID: target.userID, fullName: target.fullName, oneTimePassword });
+}));
+
+/**
+ * Set a real password after logging in with a one-time password IT issued.
+ * The only route a `mustResetPassword` token is allowed to hit (see
+ * requireAuth in auth.middleware.js) -- still re-authenticates with the
+ * one-time password itself (`currentPassword`) before accepting the new one,
+ * same re-auth-to-confirm pattern as everywhere else in this app. Returns a
+ * fresh token/user pair, same shape as login/register, since the old token's
+ * `mustResetPassword: true` is now stale.
+ */
+router.post("/set-new-password", requireAuth, asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: "'currentPassword' and 'newPassword' are required" });
+  }
+  if (!isPasswordStrongEnough(newPassword)) {
+    return res.status(400).json({ error: `Password must be at least ${MIN_LENGTH} characters and include a symbol` });
+  }
+
+  const user = await User.findOne({ userID: req.user.userID });
+  if (!user) return res.status(404).json({ error: "Account not found" });
+
+  const currentOk = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!currentOk) return res.status(401).json({ error: "Incorrect current password" });
+
+  user.passwordHash = await bcrypt.hash(newPassword, 10);
+  user.mustResetPassword = false;
+  await user.save();
+
+  const payload = await buildTokenPayload(user);
+  const token = jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || "8h",
+  });
+
+  res.json({ token, user: payload });
+}));
 
 module.exports = router;

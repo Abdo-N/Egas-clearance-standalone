@@ -3,8 +3,8 @@ export const DEMO_PASSWORD = "DemoPassw0rd!";
 
 export const demoFileManagement = {
   email: "file.management@demo.local",
-  label_en: "File Management",
-  label_ar: "إدارة الملفات",
+  label_en: "Document and Records Management",
+  label_ar: "إدارة الوثائق و السجلات",
 };
 
 export const demoDepartmentReviewers = [

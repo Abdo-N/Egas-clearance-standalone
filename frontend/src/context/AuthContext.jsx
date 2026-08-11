@@ -26,13 +26,27 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  // Called from the mandatory "set a new password" screen a one-time-password
+  // login lands on (see auth.middleware.js -- that token can't reach any
+  // other route until this succeeds). Same response shape as login/register,
+  // with mustResetPassword now false, so the frontend gate clears.
+  async function setNewPassword(currentPassword, newPassword) {
+    const { data } = await client.post("/auth/set-new-password", { currentPassword, newPassword });
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("user", JSON.stringify(data.user));
+    setUser(data.user);
+    return data.user;
+  }
+
   function logout() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setUser(null);
   }
 
-  return <AuthContext.Provider value={{ user, login, register, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, login, register, setNewPassword, logout }}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

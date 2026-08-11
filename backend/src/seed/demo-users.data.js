@@ -13,7 +13,7 @@ const nonItReviewers = [
   ["transport", "Transportation Services", "خدمات النقل"],
   ["wages", "Wages & Entitlements", "الأجور والاستحقاقات"],
   ["finance", "Financial Affairs", "الشئون المالية"],
-].map(([departmentKey, departmentName, departmentName_ar]) => ({
+].map(([departmentKey, departmentName, departmentName_ar], index) => ({
   userID: `${departmentKey}@demo.local`,
   password: DEMO_PASSWORD,
   fullName: `${departmentName} Demo Reviewer`,
@@ -21,6 +21,7 @@ const nonItReviewers = [
   role: "reviewer",
   departmentKey,
   assignedItemKey: null,
+  landlineNumber: `10${String(index + 1).padStart(2, "0")}`,
 }));
 
 // IT is the only itemized department. The application requires a distinct
@@ -32,7 +33,7 @@ const itReviewers = [
   ["pc_account_mailbox", "PC, Account & Mailbox", "الكمبيوتر والحساب والبريد"],
   ["sap_service", "SAP Services", "خدمات SAP"],
   ["sap_account_removal", "SAP Account Removal", "إزالة حساب SAP"],
-].map(([assignedItemKey, itemName, itemName_ar]) => ({
+].map(([assignedItemKey, itemName, itemName_ar], index) => ({
   userID: `it.${assignedItemKey}@demo.local`,
   password: DEMO_PASSWORD,
   fullName: `IT Demo Reviewer — ${itemName}`,
@@ -40,17 +41,19 @@ const itReviewers = [
   role: "reviewer",
   departmentKey: "it",
   assignedItemKey,
+  landlineNumber: `11${String(index + 1).padStart(2, "0")}`,
 }));
 
 const demoUsers = [
   {
     userID: "file.management@demo.local",
     password: DEMO_PASSWORD,
-    fullName: "File Management Demo",
-    fullName_ar: "مسؤول إدارة الملفات التجريبي",
+    fullName: "Document and Records Management Demo",
+    fullName_ar: "مسؤول إدارة الوثائق و السجلات التجريبي",
     role: "file_management",
     departmentKey: null,
     assignedItemKey: null,
+    landlineNumber: "1000",
   },
   ...nonItReviewers,
   ...itReviewers,

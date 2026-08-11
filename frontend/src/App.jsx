@@ -3,12 +3,17 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import SetNewPassword from "./pages/SetNewPassword";
 import FileManagementDashboard from "./pages/FileManagementDashboard";
 import ReviewerDashboard from "./pages/ReviewerDashboard";
 
+// A one-time-password login can't reach any route but /set-new-password on
+// the backend either (see requireAuth in auth.middleware.js) -- this just
+// keeps the frontend from rendering a dashboard it would immediately 403 on.
 function RequireRole({ roles, children }) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
+  if (user.mustResetPassword) return <Navigate to="/set-new-password" replace />;
   if (!roles.includes(user.role)) return <Navigate to="/login" replace />;
   return children;
 }
@@ -16,6 +21,7 @@ function RequireRole({ roles, children }) {
 function Home() {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
+  if (user.mustResetPassword) return <Navigate to="/set-new-password" replace />;
   return <Navigate to={user.role === "file_management" ? "/file-management" : "/reviewer"} replace />;
 }
 
@@ -26,6 +32,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/set-new-password" element={<SetNewPassword />} />
           <Route
             path="/file-management"
             element={

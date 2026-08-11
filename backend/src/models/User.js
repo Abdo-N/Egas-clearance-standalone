@@ -32,6 +32,19 @@ const userSchema = new mongoose.Schema(
     // itemized checklist items this specific person is responsible for
     // signing. Must match one of Department("it").checklistItems[].key.
     assignedItemKey: { type: String, default: null },
+    // Company internal/landline number ("رقم الهاتف الداخلي"), required at
+    // registration (enforced in auth.routes.js, not here, so seed data can
+    // still create accounts directly) -- lets File Management/oversight
+    // reach a signer directly instead of just seeing their name on a
+    // signed department (see signedByLandlineNumber on ClearanceRequest).
+    landlineNumber: { type: String, default: null },
+    // Set when any IT reviewer issues this account a one-time password via
+    // POST /auth/reset-password (see auth.routes.js) -- forces the very next
+    // login to go straight to POST /auth/set-new-password before touching
+    // anything else (enforced in auth.middleware.js's requireAuth, not just
+    // the frontend), so the one-time password can't linger as a permanent
+    // credential.
+    mustResetPassword: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

@@ -6,8 +6,10 @@ import TopBarControls from "../components/TopBarControls";
 import BusinessDoodleBg from "../components/BusinessDoodleBg";
 import RequestOversightGrid from "../components/RequestOversightGrid";
 import DepartmentDashboard from "../components/DepartmentDashboard";
-import EmployeeNumberFilter from "../components/EmployeeNumberFilter";
+import EmployeeSearchFilter from "../components/EmployeeSearchFilter";
+import SortableTableHeader, { isRequestOlderThanSevenDays, nextSort, sortTableRows } from "../components/SortableTableHeader";
 import PasswordInput from "../components/PasswordInput";
+import ReauthConfirmButton from "../components/ReauthConfirmButton";
 import { formatDate } from "../utils/formatDate";
 import { REASONS, reasonI18nKey } from "../utils/leavingReason";
 import { JOB_TITLES } from "../jobTitles";
@@ -85,7 +87,8 @@ export default function FileManagementDashboard() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
-  const [employeeNumberSearch, setEmployeeNumberSearch] = useState("");
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [requestSort, setRequestSort] = useState({ key: null, direction: null });
 
   const [employeeFullName, setEmployeeFullName] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
@@ -101,14 +104,14 @@ export default function FileManagementDashboard() {
   const [submitSuccess, setSubmitSuccess] = useState("");
 
   async function loadRequests() {
-    const { data } = await client.get("/requests", { params: { employeeNumber: employeeNumberSearch } });
+    const { data } = await client.get("/requests", { params: { q: employeeSearch } });
     setRequests(data);
     setLoading(false);
   }
 
   useEffect(() => {
     loadRequests();
-  }, [employeeNumberSearch]);
+  }, [employeeSearch]);
 
   useEffect(() => {
     client.get("/departments").then(({ data }) => setDepartments(data));
@@ -193,7 +196,34 @@ export default function FileManagementDashboard() {
     }
   }
 
+  // Permanent, unrecoverable -- e.g. the employee came back to the company
+  // after already being cleared. Available at any stage, not just once
+  // completed (also useful for cancelling a request filed by mistake).
+  async function handleDelete(requestId, password) {
+    try {
+      await client.post(`/requests/${requestId}/delete`, { password });
+      setExpandedId(null);
+      await loadRequests();
+    } catch (err) {
+      throw new Error(err.response?.data?.error || t("fileManagement.deleteError"));
+    }
+  }
+
   const selected = requests.find((r) => r._id === expandedId);
+  const sortedRequests = sortTableRows(requests, requestSort, {
+    employee: (request) => request.employeeFullName,
+    jobTitle: (request) => request.employeeJobTitle,
+    reason: (request) => t(`employee.${reasonI18nKey(request.reason)}`),
+    lastWorkingDay: (request) => new Date(request.lastWorkingDay).getTime(),
+    status: (request) => {
+      const modifier = requestStatusPill(request, t).modifier;
+      if (modifier === "pending") return 3;
+      if (modifier === "awaiting") return 2;
+      return 1;
+    },
+    submittedOn: (request) => new Date(request.createdAt).getTime(),
+  }, i18n.language);
+  const handleRequestSort = (key) => setRequestSort((current) => nextSort(current, key));
   const displayName = i18n.language === "ar" ? user?.fullName_ar || user?.fullName : user?.fullName;
 
   return (
@@ -251,7 +281,7 @@ export default function FileManagementDashboard() {
         {tab === "create" && (
           <section className="new-request-card">
             <h2>{t("fileManagement.newRequestTitle")}</h2>
-            <form onSubmit={handleSubmit}>
+            <form className="request-create-form" onSubmit={handleSubmit}>
               <div className="form-group">
                 <label htmlFor="employeeFullName">{t("fileManagement.fullNameLabel")}</label>
                 <input
@@ -309,22 +339,15 @@ export default function FileManagementDashboard() {
               </div>
 
               <div className="form-group">
-                <label>{t("employee.reasonLabel")}</label>
-                <div className="reason-options">
+                <label htmlFor="reason">{t("employee.reasonLabel")}</label>
+                <select id="reason" value={reason} onChange={(e) => setReason(e.target.value)} required>
+                  <option value="">{t("employee.reasonPlaceholder")}</option>
                   {REASONS.map((value) => (
-                    <label className="reason-option" key={value}>
-                      <input
-                        type="radio"
-                        name="reason"
-                        value={value}
-                        checked={reason === value}
-                        onChange={(e) => setReason(e.target.value)}
-                        required
-                      />
+                    <option key={value} value={value}>
                       {t(`employee.${reasonI18nKey(value)}`)}
-                    </label>
+                    </option>
                   ))}
-                </div>
+                </select>
               </div>
 
               <div className="form-group">
@@ -355,31 +378,45 @@ export default function FileManagementDashboard() {
 
         {tab === "list" && (
           <>
-            <EmployeeNumberFilter value={employeeNumberSearch} onChange={setEmployeeNumberSearch} />
+            {!selected ? (
+              <>
+                <EmployeeSearchFilter value={employeeSearch} onChange={setEmployeeSearch} />
 
-            {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
-            {!loading && requests.length === 0 && (
-              <p className="dashboard-status-message">{t("fileManagement.empty")}</p>
-            )}
+                {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
+                {!loading && requests.length === 0 && (
+                  <p className="dashboard-status-message">{t("fileManagement.empty")}</p>
+                )}
 
-            {!loading && requests.length > 0 && (
-              <div className="admin-table-wrapper">
-                <table className="admin-table">
+                {!loading && requests.length > 0 && (
+                  <div className="admin-table-wrapper">
+                    <table className="admin-table">
                   <thead>
                     <tr>
-                      <th>{t("reviewer.employee")}</th>
-                      <th>{t("fileManagement.jobTitleLabel")}</th>
-                      <th>{t("employee.reasonLabel")}</th>
-                      <th>{t("employee.lastWorkingDayLabel")}</th>
-                      <th>{t("employee.statusLabel")}</th>
-                      <th>{t("employee.requestedOn")}</th>
+                      <SortableTableHeader columnKey="employee" label={t("reviewer.employee")} sort={requestSort} onSort={handleRequestSort} />
+                      <SortableTableHeader columnKey="jobTitle" label={t("fileManagement.jobTitleLabel")} sort={requestSort} onSort={handleRequestSort} />
+                      <SortableTableHeader columnKey="reason" label={t("employee.reasonLabel")} sort={requestSort} onSort={handleRequestSort} />
+                      <SortableTableHeader columnKey="lastWorkingDay" label={t("employee.lastWorkingDayLabel")} sort={requestSort} onSort={handleRequestSort} />
+                      <SortableTableHeader columnKey="status" label={t("employee.statusLabel")} sort={requestSort} onSort={handleRequestSort} />
+                      <SortableTableHeader columnKey="submittedOn" label={t("employee.requestedOn")} sort={requestSort} onSort={handleRequestSort} />
                     </tr>
                   </thead>
                   <tbody>
-                    {requests.map((r) => {
+                    {sortedRequests.map((r) => {
                       const pill = requestStatusPill(r, t);
+                      const overdue = pill.modifier !== "completed" && isRequestOlderThanSevenDays(r);
                       return (
-                        <tr key={r._id} onClick={() => setExpandedId(expandedId === r._id ? null : r._id)}>
+                        <tr
+                          key={r._id}
+                          className={expandedId === r._id ? "is-selected" : ""}
+                          tabIndex={0}
+                          onClick={() => setExpandedId(r._id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setExpandedId(r._id);
+                            }
+                          }}
+                        >
                           <td>
                             {r.employeeFullName} <small>#{r.employeeNumber}</small>
                           </td>
@@ -387,19 +424,27 @@ export default function FileManagementDashboard() {
                           <td>{t(`employee.${reasonI18nKey(r.reason)}`)}</td>
                           <td>{formatDate(r.lastWorkingDay, i18n.language)}</td>
                           <td>
-                            <span className={`status-pill ${pill.modifier}`}>{pill.label}</span>
+                            <span className="status-pill-group">
+                              <span className={`status-pill ${pill.modifier}`}>{pill.label}</span>
+                              {overdue && <span className="status-pill status-pill--overdue">{t("common.overdueBadge")}</span>}
+                            </span>
                           </td>
                           <td>{formatDate(r.createdAt, i18n.language)}</td>
                         </tr>
                       );
                     })}
                   </tbody>
-                </table>
-              </div>
-            )}
-
-            {selected && (
-              <section className="detail-panel">
+                    </table>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <button className="secondary-button detail-back-button" type="button" onClick={() => setExpandedId(null)}>
+                  <span aria-hidden="true">{i18n.language === "ar" ? "→" : "←"}</span>
+                  {t("reviewer.backToList")}
+                </button>
+                <section className="detail-panel">
                 <h3>
                   {selected.employeeFullName} · #{selected.employeeNumber}
                 </h3>
@@ -423,7 +468,6 @@ export default function FileManagementDashboard() {
 
                 <RequestOversightGrid
                   request={selected}
-                  detail="summary"
                   onReopenDepartment={
                     !selected.accessRevoked
                       ? (deptKey, password) => handleReopenDepartment(selected._id, deptKey, password)
@@ -459,7 +503,22 @@ export default function FileManagementDashboard() {
                       : t("fileManagement.previewPdf")}
                   </button>
                 )}
-              </section>
+
+                {selected.status === "completed" && (
+                  <div className="danger-zone">
+                    <p>{t("fileManagement.deleteHint")}</p>
+                    <ReauthConfirmButton
+                      openLabel={t("fileManagement.deleteButton")}
+                      confirmLabel={t("fileManagement.confirmDelete")}
+                      busyLabel={t("fileManagement.deleting")}
+                      cancelLabel={t("fileManagement.cancel")}
+                      errorFallback={t("fileManagement.deleteError")}
+                      onConfirm={(password) => handleDelete(selected._id, password)}
+                    />
+                  </div>
+                )}
+                </section>
+              </>
             )}
           </>
         )}

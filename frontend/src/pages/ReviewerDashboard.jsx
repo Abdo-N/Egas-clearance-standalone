@@ -8,42 +8,91 @@ import SignaturePanel from "../components/SignaturePanel";
 import PasswordInput from "../components/PasswordInput";
 import RequestOversightGrid from "../components/RequestOversightGrid";
 import DepartmentDashboard from "../components/DepartmentDashboard";
-import EmployeeNumberFilter from "../components/EmployeeNumberFilter";
+import EmployeeSearchFilter from "../components/EmployeeSearchFilter";
+import SortableTableHeader, { isRequestOlderThanSevenDays, nextSort, sortTableRows } from "../components/SortableTableHeader";
 import { formatDate } from "../utils/formatDate";
 import { reasonI18nKey } from "../utils/leavingReason";
 import logoUrl from "../assets/egas-logo.png";
 
-// One card in the request grid -- shows enough for a reviewer to triage
-// without opening it (reason, last working day, status), not just a bare
-// employee name.
-function RequestCard({ request, dept, t, lang, onOpen, showArchivedMarker }) {
+function departmentStatusPill(request, dept, t, showArchivedMarker) {
+  const awaitingAdRemoval = showArchivedMarker && dept?.itAwaitingRevocation && !request.accessRevoked;
+  if (showArchivedMarker && request.accessRevoked) {
+    return { modifier: "archived", label: t("reviewer.accessRevokedBadgeIt") };
+  }
+  if (awaitingAdRemoval) {
+    return { modifier: "awaiting-ad", label: t("reviewer.awaitingAdRemovalBadge") };
+  }
+  return dept?.status === "completed"
+    ? { modifier: "completed", label: t("employee.departmentCompleted") }
+    : { modifier: "pending", label: t("employee.departmentPending") };
+}
+
+// Department request lists intentionally mirror File Management's table,
+// while the status remains scoped to the signed-in department.
+function RequestTable({ requests, getDept, t, lang, onOpen, showArchivedMarker }) {
+  const [sort, setSort] = useState({ key: null, direction: null });
+  const sortedRequests = sortTableRows(requests, sort, {
+    employee: (request) => request.employeeFullName,
+    jobTitle: (request) => request.employeeJobTitle,
+    reason: (request) => t(`employee.${reasonI18nKey(request.reason)}`),
+    lastWorkingDay: (request) => new Date(request.lastWorkingDay).getTime(),
+    status: (request) => {
+      const modifier = departmentStatusPill(request, getDept(request), t, showArchivedMarker).modifier;
+      if (modifier === "pending") return 3;
+      if (modifier === "awaiting-ad") return 2;
+      return 1;
+    },
+    submittedOn: (request) => new Date(request.createdAt).getTime(),
+  }, lang);
+  const handleSort = (key) => setSort((current) => nextSort(current, key));
+
   return (
-    <article className="request-card">
-      <div className="request-card-top" style={{ justifyContent: "flex-end" }}>
-        {showArchivedMarker && request.accessRevoked && (
-          <span className="status-pill archived">{t("common.accessRevokedBadge")}</span>
-        )}
-        <span className={`status-pill ${dept?.status === "completed" ? "completed" : "pending"}`}>
-          {dept?.status === "completed" ? t("employee.departmentCompleted") : t("employee.departmentPending")}
-        </span>
-      </div>
-
-      <div className="request-employee">
-        <div className="employee-avatar">{request.employeeFullName.charAt(0)}</div>
-        <div>
-          <h4>{request.employeeFullName}</h4>
-          <p>
-            {t(`employee.${reasonI18nKey(request.reason)}`)} · {formatDate(request.lastWorkingDay, lang)}
-          </p>
-        </div>
-      </div>
-
-      <div className="request-actions">
-        <button className="secondary-button" style={{ flex: 1 }} type="button" onClick={() => onOpen(request._id)}>
-          {t("reviewer.open")}
-        </button>
-      </div>
-    </article>
+    <div className="admin-table-wrapper">
+      <table className="admin-table">
+        <thead>
+          <tr>
+            <SortableTableHeader columnKey="employee" label={t("reviewer.employee")} sort={sort} onSort={handleSort} />
+            <SortableTableHeader columnKey="jobTitle" label={t("fileManagement.jobTitleLabel")} sort={sort} onSort={handleSort} />
+            <SortableTableHeader columnKey="reason" label={t("employee.reasonLabel")} sort={sort} onSort={handleSort} />
+            <SortableTableHeader columnKey="lastWorkingDay" label={t("employee.lastWorkingDayLabel")} sort={sort} onSort={handleSort} />
+            <SortableTableHeader columnKey="status" label={t("employee.statusLabel")} sort={sort} onSort={handleSort} />
+            <SortableTableHeader columnKey="submittedOn" label={t("employee.requestedOn")} sort={sort} onSort={handleSort} />
+          </tr>
+        </thead>
+        <tbody>
+          {sortedRequests.map((request) => {
+            const pill = departmentStatusPill(request, getDept(request), t, showArchivedMarker);
+            const unresolved = pill.modifier !== "completed" && pill.modifier !== "archived";
+            const overdue = unresolved && isRequestOlderThanSevenDays(request);
+            return (
+              <tr
+                key={request._id}
+                tabIndex={0}
+                onClick={() => onOpen(request._id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onOpen(request._id);
+                  }
+                }}
+              >
+                <td>{request.employeeFullName} <small>#{request.employeeNumber}</small></td>
+                <td>{request.employeeJobTitle || "—"}</td>
+                <td>{t(`employee.${reasonI18nKey(request.reason)}`)}</td>
+                <td>{formatDate(request.lastWorkingDay, lang)}</td>
+                <td>
+                  <span className="status-pill-group">
+                    <span className={`status-pill ${pill.modifier}`}>{pill.label}</span>
+                    {overdue && <span className="status-pill status-pill--overdue">{t("common.overdueBadge")}</span>}
+                  </span>
+                </td>
+                <td>{formatDate(request.createdAt, lang)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -79,6 +128,124 @@ function RevokeAccessForm({ onSubmit, busy, t }) {
   );
 }
 
+// IT-only: issue ANY account (another IT reviewer, a plain department
+// reviewer, or File Management) a fresh one-time password when they've
+// forgotten theirs -- there's no email infrastructure in this app to send a
+// reset link through instead (see CLAUDE.md), so IT hands this off directly.
+// Account-level, not tied to any clearance request, so it lives on the
+// request list screen rather than inside a request's detail panel.
+function ResetPasswordPanel({ t }) {
+  const [open, setOpen] = useState(false);
+  const [targetEmail, setTargetEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+    try {
+      const { data } = await client.post("/auth/reset-password", { userID: targetEmail, password });
+      setResult(data);
+      setTargetEmail("");
+      setPassword("");
+    } catch (err) {
+      setError(err.response?.data?.error || t("reviewer.resetPasswordError"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleCopy() {
+    navigator.clipboard?.writeText(result.oneTimePassword);
+    setCopied(true);
+  }
+
+  function handleDismiss() {
+    setResult(null);
+    setCopied(false);
+    setOpen(false);
+  }
+
+  if (result) {
+    return (
+      <section className="detail-panel" style={{ marginBottom: 16 }}>
+        <h3>{t("reviewer.resetPasswordSuccessTitle")}</h3>
+        <p>{t("reviewer.resetPasswordSuccessHint", { name: result.fullName })}</p>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 14px",
+            margin: "10px 0",
+            borderRadius: 8,
+            background: "var(--card, #f4f5f6)",
+            border: "1px dashed var(--line, #d1d5db)"
+          }}
+        >
+          <code style={{ fontSize: 16, letterSpacing: 1 }}>{result.oneTimePassword}</code>
+          <button type="button" className="secondary-button" onClick={handleCopy}>
+            {copied ? t("reviewer.resetPasswordCopied") : t("reviewer.resetPasswordCopy")}
+          </button>
+        </div>
+        <button type="button" className="secondary-button" onClick={handleDismiss}>
+          {t("reviewer.resetPasswordDismiss")}
+        </button>
+      </section>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="secondary-button" style={{ marginBottom: 16 }} onClick={() => setOpen(true)}>
+        {t("reviewer.resetPasswordTitle")}
+      </button>
+    );
+  }
+
+  return (
+    <section className="detail-panel" style={{ marginBottom: 16 }}>
+      <h3>{t("reviewer.resetPasswordTitle")}</h3>
+      <p>{t("reviewer.resetPasswordHint")}</p>
+      <form className="signature-form" onSubmit={handleSubmit}>
+        <div className="form-group">
+          <label>{t("reviewer.resetPasswordEmailLabel")}</label>
+          <input type="email" value={targetEmail} onChange={(e) => setTargetEmail(e.target.value)} required />
+        </div>
+        <div className="form-group">
+          <label>{t("signature.passwordLabel")}</label>
+          <PasswordInput
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="submit" className="secondary-button" disabled={submitting || !targetEmail || !password}>
+            {submitting ? t("reviewer.resetPasswordBusy") : t("reviewer.resetPasswordButton")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              setOpen(false);
+              setError("");
+            }}
+          >
+            {t("reviewer.cancel")}
+          </button>
+        </div>
+        {error && <small className="login-error">{error}</small>}
+      </form>
+    </section>
+  );
+}
+
 export default function ReviewerDashboard() {
   const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
@@ -88,13 +255,13 @@ export default function ReviewerDashboard() {
   const [signing, setSigning] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [undoing, setUndoing] = useState(false);
-  const [employeeNumberSearch, setEmployeeNumberSearch] = useState("");
+  const [employeeSearch, setEmployeeSearch] = useState("");
 
   const isOversight = Boolean(user.hasOversightDashboard);
   const isIT = user.departmentKey === "it";
 
   async function reload(keepId) {
-    const { data } = await client.get("/requests", { params: { employeeNumber: employeeNumberSearch } });
+    const { data } = await client.get("/requests", { params: { q: employeeSearch } });
     setRequests(data);
     setLoading(false);
     setSelectedId(keepId && data.some((r) => r._id === keepId) ? keepId : null);
@@ -102,7 +269,7 @@ export default function ReviewerDashboard() {
 
   useEffect(() => {
     reload();
-  }, [employeeNumberSearch]);
+  }, [employeeSearch]);
 
   const selected = requests.find((r) => r._id === selectedId);
   const myDept = selected?.departments.find((d) => d.departmentKey === user.departmentKey);
@@ -118,13 +285,18 @@ export default function ReviewerDashboard() {
     return request.departments.filter((d) => d.tier < dept.tier).every((d) => d.status === "completed");
   }
 
-  async function handleSign({ itemKey, password, file }) {
+  async function handleSign({ itemKey, password, file, notes }) {
     if (!selected || !myDept) return;
     setSigning(true);
     try {
       const form = new FormData();
       form.append("password", password);
       form.append("evidence", file);
+      // Only meaningful for wages/finance's single-mode sign (see
+      // SignaturePanel.jsx's showNotes) -- itemized item forms never pass
+      // this, and the backend ignores it for any department that isn't
+      // hasOversightDashboard anyway.
+      if (notes) form.append("notes", notes);
       const url = itemKey
         ? `/requests/${selected._id}/departments/${myDept.departmentKey}/items/${itemKey}/sign`
         : `/requests/${selected._id}/departments/${myDept.departmentKey}/sign`;
@@ -211,16 +383,18 @@ export default function ReviewerDashboard() {
 
         {!selected && (
           <>
-            <EmployeeNumberFilter value={employeeNumberSearch} onChange={setEmployeeNumberSearch} />
+            {isIT && <ResetPasswordPanel t={t} />}
 
             {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
-            {!loading && requests.length === 0 && (
-              <p className="dashboard-status-message">{t("reviewer.empty")}</p>
-            )}
 
-            {!loading && requests.length > 0 && (
+            {!loading && (
               <>
                 <DepartmentDashboard requests={requests} user={user} />
+                <EmployeeSearchFilter value={employeeSearch} onChange={setEmployeeSearch} />
+
+                {requests.length === 0 && (
+                  <p className="dashboard-status-message">{t("reviewer.empty")}</p>
+                )}
 
                 {needsActionList.length > 0 && (
                   <section className="requests-section">
@@ -228,19 +402,8 @@ export default function ReviewerDashboard() {
                       <h3>{t("reviewer.sectionNeedsAction")}</h3>
                       <span>{needsActionList.length}</span>
                     </div>
-                    <div className="requests-grid">
-                      {needsActionList.map((r) => (
-                        <RequestCard
-                          key={r._id}
-                          request={r}
-                          dept={myDeptOf(r)}
-                          t={t}
-                          lang={i18n.language}
-                          onOpen={setSelectedId}
-                          showArchivedMarker={isIT}
-                        />
-                      ))}
-                    </div>
+                    <RequestTable requests={needsActionList} getDept={myDeptOf} t={t}
+                      lang={i18n.language} onOpen={setSelectedId} showArchivedMarker={isIT} />
                   </section>
                 )}
 
@@ -250,19 +413,8 @@ export default function ReviewerDashboard() {
                       <h3>{t("reviewer.sectionHandled")}</h3>
                       <span>{handledList.length}</span>
                     </div>
-                    <div className="requests-grid">
-                      {handledList.map((r) => (
-                        <RequestCard
-                          key={r._id}
-                          request={r}
-                          dept={myDeptOf(r)}
-                          t={t}
-                          lang={i18n.language}
-                          onOpen={setSelectedId}
-                          showArchivedMarker={isIT}
-                        />
-                      ))}
-                    </div>
+                    <RequestTable requests={handledList} getDept={myDeptOf} t={t}
+                      lang={i18n.language} onOpen={setSelectedId} showArchivedMarker={isIT} />
                   </section>
                 )}
               </>
@@ -300,7 +452,7 @@ export default function ReviewerDashboard() {
                 <strong>{formatDate(selected.createdAt, i18n.language)}</strong>
               </div>
 
-              {isOversight && <RequestOversightGrid request={selected} detail="full" />}
+              {isOversight && <RequestOversightGrid request={selected} />}
 
               {myDept &&
                 (isDeptUnlocked(selected, myDept) ? (

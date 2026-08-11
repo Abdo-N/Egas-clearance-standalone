@@ -31,7 +31,16 @@ const MIME_TYPES_BY_EXT = {
 const DEMO_REQUEST_IDS = {
   completed: new mongoose.Types.ObjectId("66b100000000000000000001"),
   awaitingIt: new mongoose.Types.ObjectId("66b100000000000000000002"),
+  // Fixed demo cases for the wages/finance notes feature (2026-08-11) -- each
+  // fully signed and completed so the composited PDF (and its notes boxes)
+  // is immediately downloadable without any extra clicks.
+  wagesNote: new mongoose.Types.ObjectId("66b100000000000000000003"),
+  financeNote: new mongoose.Types.ObjectId("66b100000000000000000004"),
+  bothNotes: new mongoose.Types.ObjectId("66b100000000000000000005"),
 };
+
+const WAGES_NOTE_TEXT = "يوجد سلفة مستحقة على الموظف بقيمة 1500 جنيه، يجب خصمها من مستحقاته النهائية قبل الصرف.";
+const FINANCE_NOTE_TEXT = "تمت مراجعة الحساب الختامي، لا توجد أي مديونيات مستحقة على الموظف.";
 
 function demoReviewerForDepartment(departmentKey) {
   return demoUsers.find((user) => user.departmentKey === departmentKey);
@@ -63,7 +72,7 @@ function copyDummySignature(requestId, targetKey, signatureIndex) {
   };
 }
 
-function buildSignedDepartments(allDepartments, requestId, signedAtBase) {
+function buildSignedDepartments(allDepartments, requestId, signedAtBase, notesByDepartmentKey = {}) {
   let signatureIndex = 0;
 
   return allDepartments.map((department) => {
@@ -88,6 +97,7 @@ function buildSignedDepartments(allDepartments, requestId, signedAtBase) {
           status: "completed",
           signedByUserID: reviewer.userID,
           signedByFullName: reviewer.fullName,
+          signedByLandlineNumber: reviewer.landlineNumber,
           signedAt,
           evidence,
         };
@@ -124,8 +134,12 @@ function buildSignedDepartments(allDepartments, requestId, signedAtBase) {
       status: "completed",
       signedByUserID: reviewer.userID,
       signedByFullName: reviewer.fullName,
+      signedByLandlineNumber: reviewer.landlineNumber,
       signedAt,
       evidence,
+      // Only wages/finance ever have one -- see the `notes` comment on
+      // requestDepartmentSchema in ClearanceRequest.js.
+      notes: department.hasOversightDashboard ? notesByDepartmentKey[department.key] || "" : "",
       items: [],
     };
   });
@@ -145,11 +159,11 @@ async function upsertDemoUsers() {
 }
 
 async function verifyDemoSeed() {
-  const [seededUsers, completedRequest, awaitingItRequest] = await Promise.all([
+  const [seededUsers, ...requests] = await Promise.all([
     User.find({ userID: { $in: demoUsers.map((user) => user.userID) } }),
-    ClearanceRequest.findById(DEMO_REQUEST_IDS.completed),
-    ClearanceRequest.findById(DEMO_REQUEST_IDS.awaitingIt),
+    ...Object.values(DEMO_REQUEST_IDS).map((id) => ClearanceRequest.findById(id)),
   ]);
+  const [completedRequest, awaitingItRequest, wagesNoteRequest, financeNoteRequest, bothNotesRequest] = requests;
 
   if (seededUsers.length !== demoUsers.length) {
     throw new Error(`Expected ${demoUsers.length} demo users, found ${seededUsers.length}`);
@@ -158,7 +172,7 @@ async function verifyDemoSeed() {
     throw new Error("At least one demo account does not use the documented demo password");
   }
 
-  for (const request of [completedRequest, awaitingItRequest]) {
+  for (const request of requests) {
     if (!request) throw new Error("A demo request was not created");
     if (request.departments.length !== departments.length) {
       throw new Error(`${request.employeeNumber} does not contain all departments`);
@@ -193,6 +207,19 @@ async function verifyDemoSeed() {
   ) {
     throw new Error("DEMO-1002 is not in the awaiting-IT state");
   }
+
+  function departmentNotes(request, departmentKey) {
+    return request.departments.find((d) => d.departmentKey === departmentKey)?.notes || "";
+  }
+  if (!departmentNotes(wagesNoteRequest, "wages") || departmentNotes(wagesNoteRequest, "finance")) {
+    throw new Error("DEMO-1003 should have a wages note only");
+  }
+  if (!departmentNotes(financeNoteRequest, "finance") || departmentNotes(financeNoteRequest, "wages")) {
+    throw new Error("DEMO-1004 should have a finance note only");
+  }
+  if (!departmentNotes(bothNotesRequest, "wages") || !departmentNotes(bothNotesRequest, "finance")) {
+    throw new Error("DEMO-1005 should have both a wages and a finance note");
+  }
 }
 
 async function run() {
@@ -204,7 +231,7 @@ async function run() {
   console.log(`[seed] upserting ${demoUsers.length} demo accounts...`);
   await upsertDemoUsers();
 
-  console.log("[seed] replacing the two demo clearance requests...");
+  console.log("[seed] replacing the demo clearance requests...");
   const allDepartments = await Department.find({
     key: { $in: departments.map((department) => department.key) },
   }).sort({ order: 1 });
@@ -277,6 +304,87 @@ async function run() {
       createdAt: new Date(submittedAt.getTime() + 24 * 60 * 60 * 1000),
       updatedAt: new Date(approvedAt.getTime() + 24 * 60 * 60 * 1000),
     },
+    {
+      _id: DEMO_REQUEST_IDS.wagesNote,
+      employeeNumber: "DEMO-1003",
+      employeeFullName: "Layla Ibrahim (Wages Note Demo)",
+      employeeJobTitle: "Warehouse Supervisor",
+      employeeDepartment_ar: "المخازن",
+      employeeDepartment_en: "Warehouses",
+      reason: "resignation",
+      lastWorkingDay: new Date("2026-08-15T00:00:00.000Z"),
+      createdByUserID: fileManager.userID,
+      status: "completed",
+      departments: buildSignedDepartments(
+        allDepartments,
+        DEMO_REQUEST_IDS.wagesNote,
+        new Date(signedAtBase.getTime() + 2 * 24 * 60 * 60 * 1000),
+        { wages: WAGES_NOTE_TEXT }
+      ),
+      fileManagementApproved: true,
+      fileManagementApprovedAt: new Date(approvedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
+      fileManagementApprovedByUserID: fileManager.userID,
+      accessRevoked: true,
+      accessRevokedAt: new Date(completedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
+      accessRevokedByUserID: itReviewer.userID,
+      completedAt: new Date(completedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
+      createdAt: new Date(submittedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(completedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
+    },
+    {
+      _id: DEMO_REQUEST_IDS.financeNote,
+      employeeNumber: "DEMO-1004",
+      employeeFullName: "Omar Said (Finance Note Demo)",
+      employeeJobTitle: "Procurement Officer",
+      employeeDepartment_ar: "الشئون المالية",
+      employeeDepartment_en: "Financial Affairs",
+      reason: "new_job",
+      lastWorkingDay: new Date("2026-08-20T00:00:00.000Z"),
+      createdByUserID: fileManager.userID,
+      status: "completed",
+      departments: buildSignedDepartments(
+        allDepartments,
+        DEMO_REQUEST_IDS.financeNote,
+        new Date(signedAtBase.getTime() + 3 * 24 * 60 * 60 * 1000),
+        { finance: FINANCE_NOTE_TEXT }
+      ),
+      fileManagementApproved: true,
+      fileManagementApprovedAt: new Date(approvedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
+      fileManagementApprovedByUserID: fileManager.userID,
+      accessRevoked: true,
+      accessRevokedAt: new Date(completedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
+      accessRevokedByUserID: itReviewer.userID,
+      completedAt: new Date(completedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
+      createdAt: new Date(submittedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(completedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
+    },
+    {
+      _id: DEMO_REQUEST_IDS.bothNotes,
+      employeeNumber: "DEMO-1005",
+      employeeFullName: "Nadia Fathy (Both Notes Demo)",
+      employeeJobTitle: "HR Business Partner",
+      employeeDepartment_ar: "تنمية الموارد البشرية",
+      employeeDepartment_en: "HR Development",
+      reason: "early_retirement",
+      lastWorkingDay: new Date("2026-08-25T00:00:00.000Z"),
+      createdByUserID: fileManager.userID,
+      status: "completed",
+      departments: buildSignedDepartments(
+        allDepartments,
+        DEMO_REQUEST_IDS.bothNotes,
+        new Date(signedAtBase.getTime() + 4 * 24 * 60 * 60 * 1000),
+        { wages: WAGES_NOTE_TEXT, finance: FINANCE_NOTE_TEXT }
+      ),
+      fileManagementApproved: true,
+      fileManagementApprovedAt: new Date(approvedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
+      fileManagementApprovedByUserID: fileManager.userID,
+      accessRevoked: true,
+      accessRevokedAt: new Date(completedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
+      accessRevokedByUserID: itReviewer.userID,
+      completedAt: new Date(completedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
+      createdAt: new Date(submittedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(completedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
+    },
   ]);
 
   await verifyDemoSeed();
@@ -287,6 +395,9 @@ async function run() {
   console.log("  IT item reviewers: it.<item-key>@demo.local");
   console.log("  DEMO-1001: completed, signed, and access revoked");
   console.log("  DEMO-1002: signed and approved; awaiting IT access revocation");
+  console.log("  DEMO-1003: completed, wages note only");
+  console.log("  DEMO-1004: completed, finance note only");
+  console.log("  DEMO-1005: completed, wages + finance notes");
 
   process.exit(0);
 }

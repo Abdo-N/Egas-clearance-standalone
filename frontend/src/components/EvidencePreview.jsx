@@ -15,6 +15,7 @@ export default function EvidencePreview({ requestId, deptKey, itemKey, mimeType 
   const { t } = useTranslation();
   const [url, setUrl] = useState(null);
   const [failed, setFailed] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     let objectUrl;
@@ -45,8 +46,13 @@ export default function EvidencePreview({ requestId, deptKey, itemKey, mimeType 
   const isImage = /^image\//.test(mimeType || "");
   return (
     <a href={url} target="_blank" rel="noreferrer" className="evidence-preview-link">
-      {isImage ? (
-        <img src={url} alt={t("common.evidencePreviewAlt")} className="signature-thumb" />
+      {isImage && !imageFailed ? (
+        <img
+          src={url}
+          alt={t("common.evidencePreviewAlt")}
+          className="signature-thumb"
+          onError={() => setImageFailed(true)}
+        />
       ) : (
         <span className="secondary-button">{t("common.viewEvidenceFile")}</span>
       )}
