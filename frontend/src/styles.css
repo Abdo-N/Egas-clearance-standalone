@@ -895,6 +895,32 @@ p {
   font-weight: 600;
 }
 
+/* ---------- Setup-coverage warning (login/register pages) ---------- */
+
+.setup-warning-banner {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-md);
+  background: var(--gold-100);
+  color: var(--gold-600);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.setup-warning-banner strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.setup-warning-banner ul {
+  margin: 6px 0 0;
+  padding-inline-start: 18px;
+}
+
 /* ---------- Locked-department / danger banners ---------- */
 
 .success-banner {

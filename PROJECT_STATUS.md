@@ -1,12 +1,39 @@
 # Project Status
 
-Last updated: 2026-08-11 (added IT-assisted password reset with a one-time
-password, a "Forgot your password?" contact list on the login page, Active
-Directory-specific wording + a fixed IT dashboard bug, permanent request
-deletion, and the paper form's "البيان" column — by Nader + Claude).
+Last updated: 2026-08-12 (added a "setup incomplete" warning on the
+login/register pages when some department or IT checklist item has no
+reviewer account yet — by Nader + Claude).
 Update this file whenever a task moves — don't let it go stale.
 
 ## Done
+
+- [x] **"Setup incomplete" warning on login/register (2026-08-12).** Since
+      account provisioning is entirely self-service (no approval step, no
+      seeded rollout — see "self-registered accounts, no AD" in CLAUDE.md),
+      a freshly `seed:final`'d deployment could easily go live with some
+      department, or some IT checklist item, still having zero reviewer
+      accounts able to sign it — a request would hit that department and
+      just be permanently stuck, with nothing in the UI hinting why. New
+      public (no-auth) `GET /api/departments/coverage`
+      (`backend/src/routes/department.routes.js`) reports every
+      single-signature department with zero reviewer accounts, and every IT
+      checklist item with no reviewer's `assignedItemKey` matching it — same
+      "public by necessity" reasoning as `GET /api/departments` and
+      `GET /auth/it-contacts`, since a prospective registrant deciding
+      whether their signup would close a real gap has no token yet either.
+      Frontend: new `frontend/src/components/SetupCoverageWarning.jsx`
+      (fetches the endpoint, renders nothing once fully staffed or before
+      the fetch resolves) shown on both `Login.jsx` and `Register.jsx`,
+      right below the page subtitle — a gold `.setup-warning-banner` listing
+      each missing department/item by name, bilingual. Verified end to end
+      against a local Docker MongoDB (`npm run dev:local`/`seed:local`):
+      confirmed the endpoint correctly lists all 13 departments + all 5 IT
+      items on an empty (`seed:final`-only) database, flips to
+      `isFullySetUp: true` after `seed:dev`'s full demo-account seed, and
+      precisely detects a single artificially-removed IT item; screenshotted
+      the rendered banner on both pages in Arabic and English (Playwright,
+      temporary devDependency, removed afterward), and confirmed it
+      disappears once coverage is restored. `npm run build` clean.
 
 - [x] **IT-assisted password reset via a one-time password (2026-08-11).**
       No email infrastructure exists in this app to send a reset link

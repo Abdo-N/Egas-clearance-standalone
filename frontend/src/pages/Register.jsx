@@ -6,6 +6,7 @@ import client from "../api/client";
 import SupportModal from "../components/SupportModal";
 import LanguageToggle from "../components/LanguageToggle";
 import PasswordInput from "../components/PasswordInput";
+import SetupCoverageWarning from "../components/SetupCoverageWarning";
 import logoUrl from "../assets/egas-logo.png";
 import mainBackground from "../assets/egas-bg.jpg";
 
@@ -125,6 +126,8 @@ export default function Register() {
         <p style={{ margin: "0 0 20px 0", fontSize: "12px", color: "#666", textAlign: "center" }}>
           {t("register.subtitle")}
         </p>
+
+        <SetupCoverageWarning />
 
         <form onSubmit={handleSubmit} style={{ width: "100%" }}>
           <div style={{ marginBottom: "15px" }}>

@@ -50,6 +50,10 @@
     "haveAccount": "Already have an account?",
     "signIn": "Sign in"
   },
+  "setupWarning": {
+    "title": "Setup incomplete",
+    "intro": "This system can't be fully used yet -- no one has registered as a reviewer for the following, so a clearance request could never actually finish until they do:"
+  },
   "setNewPassword": {
     "title": "Set a new password",
     "subtitle": "IT gave you a one-time password. Enter it below along with a real password only you know.",
