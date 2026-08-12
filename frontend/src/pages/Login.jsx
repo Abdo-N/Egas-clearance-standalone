@@ -6,6 +6,7 @@ import client from "../api/client";
 import SupportModal from "../components/SupportModal";
 import LanguageToggle from "../components/LanguageToggle";
 import PasswordInput from "../components/PasswordInput";
+import SetupCoverageWarning from "../components/SetupCoverageWarning";
 import {
   DEMO_PASSWORD,
   demoDepartmentReviewers,
@@ -140,6 +141,8 @@ export default function Login() {
           {t("login.subtitle")}
         </p>
 
+        <SetupCoverageWarning />
+
         {/* الحقول والنموذج */}
         <form onSubmit={handleSubmit} style={{ width: "100%" }}>
           <div style={{ marginBottom: "15px" }}>
@@ -235,31 +238,33 @@ export default function Login() {
           )}
         </details>
 
-        <details className="login-demo-accounts">
-          <summary>{t("login.demoAccounts.summary")}</summary>
-          <p className="demo-accounts-hint">{t("login.demoAccounts.hint")}</p>
+        {import.meta.env.DEV && (
+          <details className="login-demo-accounts">
+            <summary>{t("login.demoAccounts.summary")}</summary>
+            <p className="demo-accounts-hint">{t("login.demoAccounts.hint")}</p>
 
-          <section className="demo-accounts-group">
-            <h4>{t("login.demoAccounts.fileManagement")}</h4>
-            <div className="demo-accounts-list">{renderDemoAccount(demoFileManagement)}</div>
-          </section>
+            <section className="demo-accounts-group">
+              <h4>{t("login.demoAccounts.fileManagement")}</h4>
+              <div className="demo-accounts-list">{renderDemoAccount(demoFileManagement)}</div>
+            </section>
 
-          <section className="demo-accounts-group">
-            <h4>{t("login.demoAccounts.departments")}</h4>
-            <div className="demo-accounts-list demo-accounts-list--scroll">
-              {demoDepartmentReviewers.map(renderDemoAccount)}
-            </div>
-          </section>
+            <section className="demo-accounts-group">
+              <h4>{t("login.demoAccounts.departments")}</h4>
+              <div className="demo-accounts-list demo-accounts-list--scroll">
+                {demoDepartmentReviewers.map(renderDemoAccount)}
+              </div>
+            </section>
 
-          <section className="demo-accounts-group">
-            <h4>{t("login.demoAccounts.it")}</h4>
-            <div className="demo-accounts-list">{demoItReviewers.map(renderDemoAccount)}</div>
-          </section>
+            <section className="demo-accounts-group">
+              <h4>{t("login.demoAccounts.it")}</h4>
+              <div className="demo-accounts-list">{demoItReviewers.map(renderDemoAccount)}</div>
+            </section>
 
-          <p className="demo-accounts-note">
-            {t("login.demoAccounts.password")} <code>{DEMO_PASSWORD}</code>
-          </p>
-        </details>
+            <p className="demo-accounts-note">
+              {t("login.demoAccounts.password")} <code>{DEMO_PASSWORD}</code>
+            </p>
+          </details>
+        )}
 
         {/* رابط إنشاء حساب */}
         <p className="auth-footer" style={{ margin: "16px 0 0", fontSize: "13px", color: "#666", textAlign: "center" }}>

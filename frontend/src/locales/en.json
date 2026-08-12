@@ -50,6 +50,10 @@
     "haveAccount": "Already have an account?",
     "signIn": "Sign in"
   },
+  "setupWarning": {
+    "title": "Setup incomplete",
+    "intro": "This system can't be fully used yet -- no one has registered as a reviewer for the following, so a clearance request could never actually finish until they do:"
+  },
   "setNewPassword": {
     "title": "Set a new password",
     "subtitle": "IT gave you a one-time password. Enter it below along with a real password only you know.",
@@ -141,6 +145,13 @@
     "resetPasswordCopy": "Copy",
     "resetPasswordCopied": "Copied",
     "resetPasswordDismiss": "Done",
+    "deleteAccountTitle": "Delete an account",
+    "deleteAccountHint": "Permanently removes the account -- another IT reviewer (including your own), a department reviewer, or Document and Records Management. This can't be undone; their past signatures stay on any requests they already signed. Re-enter your own password to confirm.",
+    "deleteAccountButton": "Delete account",
+    "deleteAccountBusy": "Deleting...",
+    "deleteAccountError": "Failed to delete that account. Check the email and your password and try again.",
+    "deleteAccountSuccessTitle": "Account deleted",
+    "deleteAccountSuccessHint": "{{name}}'s account has been permanently deleted.",
     "dashboardTotal": "Total requests",
     "dashboardDepartmentOverview": "Your department overview",
     "dashboardPending": "Waiting on you",

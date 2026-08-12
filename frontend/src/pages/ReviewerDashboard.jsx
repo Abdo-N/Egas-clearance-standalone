@@ -246,6 +246,108 @@ function ResetPasswordPanel({ t }) {
   );
 }
 
+// IT-only: permanently delete ANY account -- another IT reviewer (including
+// the acting IT reviewer's own), a plain department reviewer, or File
+// Management. No separate object to select first (unlike ReauthConfirmButton
+// elsewhere in the app, which confirms an action on something already on
+// screen), so this needs its own target-email field, same shape as
+// ResetPasswordPanel above. Deleting your own account logs you straight out
+// via onSelfDelete instead of showing a dismissible success panel, since
+// there'd be nothing left to dismiss back to.
+function DeleteAccountPanel({ t, currentUserID, onSelfDelete }) {
+  const [open, setOpen] = useState(false);
+  const [targetEmail, setTargetEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+    try {
+      const { data } = await client.post("/auth/delete-account", { userID: targetEmail, password });
+      if (data.userID.toLowerCase() === currentUserID.toLowerCase()) {
+        onSelfDelete();
+        return;
+      }
+      setResult(data);
+      setTargetEmail("");
+      setPassword("");
+    } catch (err) {
+      setError(err.response?.data?.error || t("reviewer.deleteAccountError"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleDismiss() {
+    setResult(null);
+    setOpen(false);
+  }
+
+  if (result) {
+    return (
+      <section className="detail-panel" style={{ marginBottom: 16 }}>
+        <h3>{t("reviewer.deleteAccountSuccessTitle")}</h3>
+        <p>{t("reviewer.deleteAccountSuccessHint", { name: result.fullName })}</p>
+        <button type="button" className="secondary-button" onClick={handleDismiss}>
+          {t("reviewer.resetPasswordDismiss")}
+        </button>
+      </section>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="secondary-button" style={{ marginBottom: 16 }} onClick={() => setOpen(true)}>
+        {t("reviewer.deleteAccountTitle")}
+      </button>
+    );
+  }
+
+  return (
+    <section className="detail-panel" style={{ marginBottom: 16 }}>
+      <h3>{t("reviewer.deleteAccountTitle")}</h3>
+      <div className="danger-zone">
+        <p>{t("reviewer.deleteAccountHint")}</p>
+        <form className="signature-form" onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label>{t("reviewer.resetPasswordEmailLabel")}</label>
+            <input type="email" value={targetEmail} onChange={(e) => setTargetEmail(e.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label>{t("signature.passwordLabel")}</label>
+            <PasswordInput
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="submit" className="secondary-button" disabled={submitting || !targetEmail || !password}>
+              {submitting ? t("reviewer.deleteAccountBusy") : t("reviewer.deleteAccountButton")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                setOpen(false);
+                setError("");
+              }}
+            >
+              {t("reviewer.cancel")}
+            </button>
+          </div>
+          {error && <small className="login-error">{error}</small>}
+        </form>
+      </div>
+    </section>
+  );
+}
+
 export default function ReviewerDashboard() {
   const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
@@ -384,6 +486,7 @@ export default function ReviewerDashboard() {
         {!selected && (
           <>
             {isIT && <ResetPasswordPanel t={t} />}
+            {isIT && <DeleteAccountPanel t={t} currentUserID={user.userID} onSelfDelete={logout} />}
 
             {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
 

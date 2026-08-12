@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: "Missing token" });
@@ -14,6 +15,15 @@ function requireAuth(req, res, next) {
     // check is cosmetic everywhere else in this app too.
     if (payload.mustResetPassword && req.path !== "/set-new-password") {
       return res.status(403).json({ error: "You must set a new password before continuing", code: "PASSWORD_RESET_REQUIRED" });
+    }
+    // Re-checked against the DB (not just trusted from the JWT payload) so a
+    // deleted account (see POST /auth/delete-account) is locked out
+    // immediately instead of staying usable until its token naturally
+    // expires -- the one place in this app's otherwise-stateless auth that
+    // needs a live DB read on every request.
+    const stillExists = await User.findByPk(payload.userID);
+    if (!stillExists) {
+      return res.status(401).json({ error: "Account no longer exists" });
     }
     req.user = payload; // { userID, fullName, role, departmentKey, assignedItemKey, landlineNumber, hasOversightDashboard }
     next();
