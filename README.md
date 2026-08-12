@@ -26,8 +26,6 @@ with role-based dashboards and server-enforced visibility rules.
 - Composited clearance PDF generated from the official form template.
 - Reviewer and File Management analytics for workload, completion, reasons,
   monthly trends, employee departments, and recent activity.
-- Deterministic demo accounts and two fully populated demo requests.
-- A login-page demo account picker that fills credentials automatically.
 
 ## Roles and visibility
 
@@ -165,14 +163,13 @@ JWT_SECRET=replace_with_a_long_random_secret
 JWT_EXPIRES_IN=8h
 ```
 
-Seed the reference data, demo accounts, signatures, and demo requests:
+Seed the 13 real departments (no demo accounts, requests, or evidence):
 
 ```bash
-npm run seed:dev --prefix backend
+npm run seed:final --prefix backend
 ```
 
-For a real deployment with no demo data, use `npm run seed:final --prefix backend`
-instead — it upserts only the 13 real departments.
+Everyone who needs access then registers their own real account at `/register`.
 
 Start the frontend and backend together:
 
@@ -185,40 +182,6 @@ npm run dev
 - Health check: http://localhost:4000/api/health
 
 The frontend development server proxies `/api` to the backend.
-
-## Demo accounts and data
-
-Every seeded demo account uses:
-
-```text
-DemoPassw0rd!
-```
-
-| Account | Email |
-|---|---|
-| File Management | `file.management@demo.local` |
-| A non-IT department reviewer | `<department-key>@demo.local` |
-| IT Mobile and Data Lines | `it.mobile_data_lines@demo.local` |
-| IT Phone | `it.phone@demo.local` |
-| IT PC, Account, and Mailbox | `it.pc_account_mailbox@demo.local` |
-| IT SAP Services | `it.sap_service@demo.local` |
-| IT SAP Account Removal | `it.sap_account_removal@demo.local` |
-
-Examples of non-IT reviewer emails are `security@demo.local`,
-`wages@demo.local`, and `finance@demo.local`. The complete list is in
-`backend/src/seed/demo-users.data.js` and is mirrored by
-`frontend/src/demoAccounts.js` for the login-page picker.
-
-The seed creates two requests using evidence from `frontend/src/assets`:
-
-| Employee number | State |
-|---|---|
-| `DEMO-1001` | Fully signed, File Management approved, access revoked, and completed |
-| `DEMO-1002` | Fully signed and approved; waiting only for IT to revoke access |
-
-The seed is idempotent. It upserts the 13 departments and 18 demo accounts,
-then replaces only the two fixed demo requests and their evidence directories.
-Unrelated users and requests are preserved.
 
 ## Dashboards
 
@@ -291,20 +254,9 @@ npm run dev --prefix frontend
 # Build the frontend
 npm run build --prefix frontend
 
-# Reapply the deterministic demo seed
-npm run seed:dev --prefix backend
-
-# Seed only the real departments (no demo data) -- for real deployments
+# Seed the 13 real departments (no demo data)
 npm run seed:final --prefix backend
-
-# Optional destructive/manual workflow test against a running seeded server
-node backend/scripts/smoke-test.js
 ```
-
-The smoke test creates uniquely named throwaway accounts, a completed request,
-and uploaded evidence in the configured development database. Rerun the seed if
-you want to restore the two canonical demo requests afterward; unrelated smoke
-records are intentionally not deleted automatically.
 
 ## Project structure
 
@@ -318,7 +270,7 @@ Egas-clearance/
 │   │   ├── middleware/         JWT and role/department guards
 │   │   ├── models/             User, Department, ClearanceRequest
 │   │   ├── routes/             Auth, department, and request APIs
-│   │   ├── seed/               Department and deterministic demo data
+│   │   ├── seed/               Department reference data
 │   │   ├── services/           Signed clearance PDF generation
 │   │   └── utils/              Async error handling and password policy
 │   └── uploads/                Runtime evidence files; ignored by Git
@@ -370,8 +322,6 @@ git diff --check
   may need adjustment if that file changes.
 - WEBP evidence can be uploaded and viewed but is not yet embedded in the
   generated PDF.
-- Demo credentials and the login-page account picker are intended only for
-  development and demonstrations.
 
 ## Technology
 

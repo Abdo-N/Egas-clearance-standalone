@@ -14,15 +14,6 @@
       "toggle": "Forgot your password?",
       "hint": "Contact any IT reviewer below and ask for a one-time password.",
       "empty": "No IT contacts found."
-    },
-    "demoAccounts": {
-      "summary": "Demo accounts",
-      "hint": "Choose an account to fill its email and password, then sign in.",
-      "fileManagement": "Document and Records Management",
-      "departments": "Department reviewers",
-      "it": "IT checklist reviewers",
-      "use": "Use",
-      "password": "Shared password:"
     }
   },
   "register": {

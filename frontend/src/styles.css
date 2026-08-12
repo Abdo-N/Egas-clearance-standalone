@@ -474,7 +474,7 @@ p {
   font-size: 0.8rem;
 }
 
-/* ---------- Temporary demo-accounts card (login page) ---------- */
+/* ---------- Collapsible contact card (login page "forgot password") ---------- */
 
 .login-demo-accounts {
   width: 100%;
@@ -504,58 +504,9 @@ p {
   font-size: 0.72rem;
 }
 
-.demo-accounts-group {
-  margin-top: 14px;
-}
-
-.demo-accounts-group:first-of-type {
-  margin-top: 0;
-}
-
-.demo-accounts-group h4 {
-  margin: 0 0 6px;
-  color: var(--green-800);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .demo-accounts-list {
   display: grid;
   gap: 5px;
-}
-
-.demo-accounts-list--scroll {
-  max-height: 200px;
-  overflow-y: auto;
-  padding-inline-end: 4px;
-}
-
-.demo-accounts-list button {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid #e5ede9;
-  border-radius: 7px;
-  background: #fff;
-  color: var(--ink-900);
-  font-size: 0.76rem;
-  text-align: start;
-  cursor: pointer;
-}
-
-.demo-accounts-list button:hover {
-  border-color: var(--green-700);
-  background: var(--green-100);
-}
-
-.demo-accounts-list button small {
-  color: var(--ink-500);
-  font-size: 0.7rem;
 }
 
 .demo-account-identity {
@@ -565,36 +516,6 @@ p {
 .demo-account-identity strong {
   display: block;
   font-size: 0.76rem;
-}
-
-.demo-account-email {
-  display: block;
-  margin-top: 2px;
-  overflow-wrap: anywhere;
-  direction: ltr;
-  text-align: start;
-}
-
-.demo-account-use {
-  flex: none;
-  margin-top: 2px;
-  color: var(--green-700);
-  font-size: 0.68rem;
-  font-weight: 800;
-}
-
-.demo-accounts-note {
-  margin: 12px 0 0;
-  color: var(--ink-500);
-  font-size: 0.72rem;
-}
-
-.demo-accounts-note code {
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: #eef4f3;
-  color: var(--green-800);
-  font-weight: 700;
 }
 
 .it-contact-row {
@@ -2451,7 +2372,6 @@ p {
 [data-theme="dark"] .auth-card form input:not([type="radio"]),
 [data-theme="dark"] .auth-card form select,
 [data-theme="dark"] .login-demo-accounts,
-[data-theme="dark"] .demo-accounts-list button,
 [data-theme="dark"] .it-contact-row {
   border-color: var(--line) !important;
   background: var(--bg-page) !important;
