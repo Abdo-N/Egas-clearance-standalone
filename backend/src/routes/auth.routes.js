@@ -212,6 +212,44 @@ router.post("/reset-password", requireAuth, requireRole("reviewer"), asyncHandle
 }));
 
 /**
+ * REVIEWER (IT only): permanently delete ANY account -- another IT reviewer
+ * (including the acting IT reviewer's own account), a plain department
+ * reviewer, or File Management. Re-authenticates the ACTING IT reviewer's
+ * own password first, same re-auth-to-confirm pattern as reset-password/
+ * revoke-access. Safe to hard-delete: every place a signature is displayed
+ * (ClearanceRequest.departments[]/items[]) already stores its own
+ * signedByFullName/signedByLandlineNumber snapshot rather than joining
+ * live against User, so deleting an account that has already signed
+ * requests doesn't touch that history. No restrictions on which account
+ * can be deleted -- including the last remaining IT account or the acting
+ * IT reviewer's own -- that's judged IT's call to make, not something to
+ * gate here. Takes effect immediately for the deleted account: requireAuth
+ * re-checks the account still exists in the DB on every request, not just
+ * at login.
+ */
+router.post("/delete-account", requireAuth, requireRole("reviewer"), asyncHandler(async (req, res) => {
+  if (req.user.departmentKey !== "it") {
+    return res.status(403).json({ error: "Only IT can delete accounts" });
+  }
+  const { userID, password } = req.body;
+  if (!userID || !password) {
+    return res.status(400).json({ error: "'userID' and 'password' are required" });
+  }
+
+  const actingPasswordOk = await verifyPassword(req.user.userID, password);
+  if (!actingPasswordOk) return res.status(401).json({ error: "Incorrect password" });
+
+  const targetEmail = userID.trim().toLowerCase();
+  const target = await User.findOne({ userID: targetEmail });
+  if (!target) return res.status(404).json({ error: "No account found with that email" });
+
+  const deletedFullName = target.fullName;
+  await target.deleteOne();
+
+  res.json({ userID: targetEmail, fullName: deletedFullName });
+}));
+
+/**
  * Set a real password after logging in with a one-time password IT issued.
  * The only route a `mustResetPassword` token is allowed to hit (see
  * requireAuth in auth.middleware.js) -- still re-authenticates with the
