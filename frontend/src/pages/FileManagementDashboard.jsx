@@ -491,7 +491,7 @@ export default function FileManagementDashboard() {
 
                 {isFullySigned(selected) && (
                   <button
-                    className="login-button"
+                    className="secondary-button fm-pdf-button"
                     type="button"
                     disabled={downloadingId === selected._id}
                     onClick={() => handleDownloadPdf(selected._id)}

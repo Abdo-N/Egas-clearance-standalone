@@ -195,7 +195,7 @@
     "approveHint": "Every department has signed. Review the signed form above -- if anything looks unclear, reopen that department first. Otherwise, re-enter your password to approve.",
     "approving": "Approving...",
     "approveError": "Failed to approve. Check your password and try again.",
-    "approvedNote": "Approved -- waiting on IT to revoke this employee's system access.",
+    "approvedNote": "Approved -- waiting for the IT department to revoke this employee's system access.",
     "employeeNumberLabel": "Employee number",
     "fullNameLabel": "Full name",
     "jobTitleLabel": "Job title",

@@ -832,6 +832,10 @@ p {
   transform: translateY(0);
 }
 
+.fm-pdf-button {
+  margin-top: 16px;
+}
+
 .secondary-button:disabled,
 .reject-button:disabled,
 .approve-button:disabled {
