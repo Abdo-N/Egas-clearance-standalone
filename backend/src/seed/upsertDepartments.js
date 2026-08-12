@@ -1,16 +1,18 @@
-const Department = require("../models/Department");
+const { Department, DepartmentChecklistItem } = require("../models");
 const departments = require("./departments.data");
 
 async function upsertDepartments() {
-  await Department.bulkWrite(
-    departments.map((department) => ({
-      updateOne: {
-        filter: { key: department.key },
-        update: { $set: department },
-        upsert: true,
-      },
-    }))
-  );
+  for (const department of departments) {
+    const { checklistItems, ...fields } = department;
+    await Department.upsert(fields);
+    for (const item of checklistItems) {
+      const [row] = await DepartmentChecklistItem.findOrCreate({
+        where: { departmentKey: department.key, key: item.key },
+        defaults: { label_ar: item.label_ar, label_en: item.label_en },
+      });
+      await row.update({ label_ar: item.label_ar, label_en: item.label_en });
+    }
+  }
   return departments;
 }
 

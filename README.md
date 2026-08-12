@@ -141,7 +141,7 @@ snapshot so later template changes do not alter requests already in progress.
 
 - Node.js 18 or newer
 - npm
-- MongoDB locally or a MongoDB Atlas database
+- PostgreSQL locally (or any reachable Postgres instance)
 
 ### Installation
 
@@ -160,7 +160,7 @@ Configure `backend/.env`:
 
 ```dotenv
 PORT=4000
-MONGO_URI=mongodb://localhost:27017/egas_clearance
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/egas_clearance
 JWT_SECRET=replace_with_a_long_random_secret
 JWT_EXPIRES_IN=8h
 ```
@@ -314,12 +314,12 @@ Egas-clearance/
 │   ├── assets/                 Clearance form template and demo signatures
 │   ├── scripts/smoke-test.js   Manual end-to-end workflow test
 │   ├── src/
-│   │   ├── config/             MongoDB connection
+│   │   ├── config/             Sequelize/PostgreSQL connection
 │   │   ├── middleware/         JWT and role/department guards
-│   │   ├── models/             User, Department, ClearanceRequest
+│   │   ├── models/             Sequelize models: User, Department, ClearanceRequest
 │   │   ├── routes/             Auth, department, and request APIs
 │   │   ├── seed/               Department and deterministic demo data
-│   │   ├── services/           Signed clearance PDF generation
+│   │   ├── services/           Signed clearance PDF generation, request assembly
 │   │   └── utils/              Async error handling and password policy
 │   └── uploads/                Runtime evidence files; ignored by Git
 ├── frontend/
@@ -375,7 +375,7 @@ git diff --check
 
 ## Technology
 
-- **Backend:** Node.js, Express, MongoDB/Mongoose, JWT, bcryptjs, multer,
+- **Backend:** Node.js, Express, PostgreSQL/Sequelize, JWT, bcryptjs, multer,
   pdf-lib, pdfjs-dist, `@napi-rs/canvas`, pngjs, and jpeg-js.
 - **Frontend:** React 18, Vite, React Router, Axios, react-i18next, and
   Recharts.

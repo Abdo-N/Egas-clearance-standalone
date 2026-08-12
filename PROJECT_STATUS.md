@@ -1,12 +1,50 @@
 # Project Status
 
-Last updated: 2026-08-11 (added IT-assisted password reset with a one-time
-password, a "Forgot your password?" contact list on the login page, Active
-Directory-specific wording + a fixed IT dashboard bug, permanent request
-deletion, and the paper form's "البيان" column — by Nader + Claude).
-Update this file whenever a task moves — don't let it go stale.
+Last updated: 2026-08-12 (migrated the entire data layer from
+MongoDB/Mongoose to PostgreSQL/Sequelize, on a new `postgres-migration`
+branch — by Nader + Claude). Update this file whenever a task moves — don't
+let it go stale.
 
 ## Done
+
+- [x] **Migrated the data layer from MongoDB/Mongoose to PostgreSQL/Sequelize
+      (2026-08-12), on a new `postgres-migration` branch (not yet merged to
+      `main`).** A full rewrite of every model, all three route files' data
+      access, and the seed scripts — see the new "Data layer: PostgreSQL via
+      Sequelize" section in `CLAUDE.md` for the schema design and, more
+      importantly, the compatibility-shim strategy that made this tractable:
+      `backend/src/services/requestAssembly.js` reconstructs the exact
+      plain-object shape (`_id`, nested `departments[].items[]`, a
+      `evidence: {...}|null` object) Mongoose's `.toObject()` used to
+      produce, so every pure business-logic function in `request.routes.js`
+      (tier-locking, redaction, `computeOverallStatus`, etc.) and
+      `clearancePdf.js`'s PDF compositing needed **zero changes** — they
+      only ever touched plain objects, never Mongoose documents directly.
+      New schema: `departments`/`department_checklist_items` (Department's
+      template `key` stays the natural primary key), `users` (`userID`/email
+      stays the PK), `clearance_requests` (new UUID PK, replacing Mongo's
+      ObjectId) with child tables `request_departments`/`request_items`
+      replacing the old embedded arrays. No migrations directory --
+      `config/db.js` calls `sequelize.sync({ alter: true })` at startup,
+      matching Mongoose's old implicit-collection-creation convenience and
+      this repo's existing no-CI-pipeline philosophy. `DATABASE_URL`
+      replaces `MONGO_URI` in `.env`; `seed:local`/root `dev:local` now spin
+      up a Docker Postgres (`egas-postgres`) instead of Mongo.
+      Verified thoroughly given the size of this rewrite: `npm run seed:dev`
+      passes its own `verifyDemoSeed()` checks against a real local
+      Postgres; the FULL `backend/scripts/smoke-test.js` suite passes
+      end-to-end (tier locking, single/itemized signing, self-undo,
+      cross-department 403s, evidence visibility, approve-clearance,
+      revoke-access, redaction, the whole password-reset flow); manually
+      verified the permanent-delete route (row + cascaded children + evidence
+      directory all gone, confirmed via a direct DB count); downloaded a real
+      composited PDF from Postgres-backed data and confirmed all 13 rows
+      render correctly (signatures, signer names, "خالي الطرف" stamps); and
+      drove the actual frontend against the Postgres-backed API
+      (Playwright) — request list, status badges, and the full expanded
+      detail view for a 13-department request all render identically to the
+      Mongo-era app. `npm run build` clean. Frontend code is completely
+      unchanged -- this was a backend/database-only migration.
 
 - [x] **IT-assisted password reset via a one-time password (2026-08-11).**
       No email infrastructure exists in this app to send a reset link

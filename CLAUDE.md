@@ -31,10 +31,11 @@ codebase is organized.
 
 ## Stack
 
-- Backend: Node.js + Express + MongoDB (Mongoose). JWT auth. `multer` for
-  evidence-photo/PDF uploads, `pdf-lib` for compositing signatures onto the
-  paper-form template, `pngjs`/`jpeg-js` for stripping evidence photos' white
-  backgrounds before compositing.
+- Backend: Node.js + Express + PostgreSQL (Sequelize, migrated from MongoDB
+  2026-08-12 -- see "Data layer: PostgreSQL via Sequelize" below). JWT auth.
+  `multer` for evidence-photo/PDF uploads, `pdf-lib` for compositing
+  signatures onto the paper-form template, `pngjs`/`jpeg-js` for stripping
+  evidence photos' white backgrounds before compositing.
 - Frontend: React + Vite + React Router + react-i18next (Arabic/English, RTL support).
 - Everything is JavaScript (no TypeScript) to keep the learning curve low for a
   team that is mostly new to fullstack dev.
@@ -47,8 +48,16 @@ egas-clearance/
     assets/
       clearance-form-template.pdf   the paper-form template -- the compositing target
     src/
-      config/db.js          Mongo connection
-      models/                Mongoose schemas: User, Department, ClearanceRequest
+      config/db.js          Sequelize/Postgres connection
+      models/index.js        every Sequelize model + association (User, Department,
+                              DepartmentChecklistItem, ClearanceRequest,
+                              RequestDepartment, RequestItem); models/User.js,
+                              Department.js, ClearanceRequest.js are thin
+                              re-export shims into it
+      services/requestAssembly.js   bridges the relational schema back to the
+                              plain-object shape (nested departments[]/items[],
+                              `_id`) every route handler and clearancePdf.js
+                              already expect -- see "Data layer" below
       routes/                auth, department, request routes
       middleware/            JWT auth + role guards
       services/clearancePdf.js   composites signature evidence onto the template PDF
@@ -78,6 +87,61 @@ egas-clearance/
   PROJECT_STATUS.md   living status tracker — update this as you finish tasks
   TASKS.md            historical sprint plan, superseded by this revamp
 ```
+
+## Data layer: PostgreSQL via Sequelize (migrated 2026-08-12)
+
+This app ran on MongoDB/Mongoose from the original build through 2026-08-11;
+it's PostgreSQL/Sequelize as of 2026-08-12. The relational schema
+(`backend/src/models/index.js`) mirrors the old document shape as closely as
+a normalized schema allows:
+
+- `departments` (PK `key`, the same natural key `User.departmentKey` and
+  every request snapshot already used -- no separate surrogate id) has a
+  `department_checklist_items` child table (IT's 5 template items).
+- `users` (PK `userID`, the account's email -- already the natural,
+  globally-unique identifier everything else references it by).
+- `clearance_requests` (PK `id`, a UUID -- Mongo's ObjectId equivalent) has a
+  `request_departments` child table, one row per department SNAPSHOTTED onto
+  that request at submission time (replacing the old embedded
+  `departments[]` array -- same "don't retroactively change a request
+  already in flight" reasoning as before), which itself has a
+  `request_items` child table for IT's 5 itemized signatures (replacing the
+  old embedded `items[]`).
+
+Column/attribute names deliberately still match the old Mongoose field names
+exactly, including the original mix of snake_case (`name_ar`) and camelCase
+(`hasOversightDashboard`) -- not a SQL-convention rename pass, so every place
+that already read/wrote those exact property names keeps working.
+
+**The compatibility shim that made this a faithful rewrite instead of a
+rewrite-everything project**: `backend/src/services/requestAssembly.js`'s
+`toPlainRequest()` converts a fetched `ClearanceRequest` (with its
+`RequestDepartment`/`RequestItem` rows eagerly included) back into the exact
+plain-object shape Mongoose's `.toObject()` used to produce -- `_id` (not
+`id`, since the frontend references `request._id` throughout and this was a
+backend-only migration), nested `departments[].items[]`, a reconstructed
+`evidence: {fileUrl,mimeType,originalName}|null` from three flat columns
+instead of three separate ones. Every pure business-logic helper in
+`request.routes.js` (`allDepartmentsSigned`, `computeOverallStatus`,
+`isDepartmentUnlocked`, `redactToOwnDepartment`, `withOwnDepartmentAnnotated`,
+`summarizeForFileManagement`, `accessRevocationFlags`, `isPendingForReviewer`)
+and `clearancePdf.js`'s `generateClearancePdf()` are **completely unchanged**
+from the Mongoose era -- they only ever operated on plain objects with these
+exact property names, never on Mongoose documents directly, so this shim is
+the entire adaptation layer. Write routes fetch the plain object for
+validation (reusing that same unchanged logic), persist only the columns
+that actually changed via targeted Sequelize `.update()` calls, then
+re-fetch fresh from the DB before responding (`refreshAndSyncStatus()` in
+`request.routes.js`) rather than trying to keep an in-memory shadow object in
+sync with what was written -- simpler and safer at this app's tiny scale
+than the alternative.
+
+No separate migrations directory: `config/db.js` calls
+`sequelize.sync({ alter: true })` at startup, matching Mongoose's old
+implicit collection creation and the same low-ceremony philosophy the rest
+of this repo already follows (no CI pipeline either, see "Commands" below).
+`DATABASE_URL` (a standard `postgres://` connection string) replaces the old
+`MONGO_URI` in `.env`.
 
 ## The most important design decision: self-registered accounts, no AD
 
@@ -284,9 +348,10 @@ ONLY there:
    reverting a finalized clearance decision specifically, not a general
    "cancel any request" tool — a request still mid-flight (signed but not
    yet fully revoked) can't be deleted this way, only reopened. Real hard
-   delete: the MongoDB document AND its `backend/uploads/<requestId>/`
-   evidence directory are both removed, no soft-delete/archive flag anywhere
-   in this schema, no undo. Password re-auth like every other consequential
+   delete: the `clearance_requests` row (its `request_departments`/
+   `request_items` children cascade with it via the foreign key) AND its
+   `backend/uploads/<requestId>/` evidence directory are both removed, no
+   soft-delete/archive flag anywhere in this schema, no undo. Password re-auth like every other consequential
    action here; any File Management account, not just the request's
    creator, same rule as reopen.
 
@@ -399,8 +464,8 @@ Backend:
 ```
 cd backend
 npm install
-cp .env.example .env     # then point MONGO_URI at your local MongoDB
-npm run seed:dev           # upserts demo/reference data and replaces 2 fixed demo requests
+cp .env.example .env     # then point DATABASE_URL at your local PostgreSQL
+npm run seed:dev           # upserts demo/reference data and replaces 5 fixed demo requests
 npm run dev                # nodemon, http://localhost:4000
 node scripts/smoke-test.js # exercises the full flow, registering its own throwaway accounts
 ```
@@ -413,7 +478,7 @@ npm run dev   # http://localhost:5173, proxies /api to localhost:4000
 ```
 
 `npm run seed:dev` upserts a deterministic demo account set and replaces the
-two fixed demo requests without deleting unrelated registered accounts/requests.
+five fixed demo requests without deleting unrelated registered accounts/requests.
 All demo accounts use `DemoPassw0rd!`; see
 `backend/src/seed/demo-users.data.js` for the complete login list. New accounts
 can still be created at `/register`.
@@ -423,10 +488,12 @@ upserts only the 13 real departments (`backend/src/seed/upsertDepartments.js`,
 shared with `seed:dev`) and creates no demo accounts, requests, or evidence
 files. See "self-registered accounts, no AD" above: after `seed:final`,
 everyone who needs access registers their own real account at `/register`.
+`npm run seed:local`/root `npm run dev:local` spin up a throwaway local
+PostgreSQL via Docker (`egas-postgres` container) for offline dev.
 
 **Deployment target (decided 2026-08-10):** a company-controlled Windows
-Server running a local MongoDB instance, not the shared Atlas dev cluster
-used during development — `MONGO_URI` in `.env` needs to point at that local
+Server running a local PostgreSQL instance (MongoDB through 2026-08-11, see
+"Data layer" above) — `DATABASE_URL` in `.env` needs to point at that local
 instance at deploy time. Given the small trusted user base and internal-only
 network, this repo deliberately has no CI pipeline, rate limiting, or
 automated test suite beyond `scripts/smoke-test.js` — that's judged

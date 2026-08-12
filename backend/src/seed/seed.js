@@ -1,12 +1,15 @@
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
-const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
-const connectDB = require("../config/db");
-const Department = require("../models/Department");
-const User = require("../models/User");
-const ClearanceRequest = require("../models/ClearanceRequest");
+const { Op } = require("sequelize");
+const { connectDB } = require("../config/db");
+const { Department, User } = require("../models");
+const {
+  findRequestById,
+  insertRequestWithDepartments,
+  deleteRequest,
+} = require("../services/requestAssembly");
 const departments = require("./departments.data");
 const upsertDepartments = require("./upsertDepartments");
 const { DEMO_PASSWORD, demoUsers } = require("./demo-users.data");
@@ -28,15 +31,20 @@ const MIME_TYPES_BY_EXT = {
   ".pdf": "application/pdf",
 };
 
+// Fixed, deterministic UUIDs (Postgres's uuid type only validates the
+// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx hex shape, not the RFC4122
+// version/variant nibbles, so these hand-picked ids work fine as literal
+// values) so re-running this script always replaces the same 5 demo
+// requests -- same idempotent-seed intent as the old fixed Mongo ObjectIds.
 const DEMO_REQUEST_IDS = {
-  completed: new mongoose.Types.ObjectId("66b100000000000000000001"),
-  awaitingIt: new mongoose.Types.ObjectId("66b100000000000000000002"),
+  completed: "66b10000-0000-0000-0000-000000000001",
+  awaitingIt: "66b10000-0000-0000-0000-000000000002",
   // Fixed demo cases for the wages/finance notes feature (2026-08-11) -- each
   // fully signed and completed so the composited PDF (and its notes boxes)
   // is immediately downloadable without any extra clicks.
-  wagesNote: new mongoose.Types.ObjectId("66b100000000000000000003"),
-  financeNote: new mongoose.Types.ObjectId("66b100000000000000000004"),
-  bothNotes: new mongoose.Types.ObjectId("66b100000000000000000005"),
+  wagesNote: "66b10000-0000-0000-0000-000000000003",
+  financeNote: "66b10000-0000-0000-0000-000000000004",
+  bothNotes: "66b10000-0000-0000-0000-000000000005",
 };
 
 const WAGES_NOTE_TEXT = "يوجد سلفة مستحقة على الموظف بقيمة 1500 جنيه، يجب خصمها من مستحقاته النهائية قبل الصرف.";
@@ -138,7 +146,7 @@ function buildSignedDepartments(allDepartments, requestId, signedAtBase, notesBy
       signedAt,
       evidence,
       // Only wages/finance ever have one -- see the `notes` comment on
-      // requestDepartmentSchema in ClearanceRequest.js.
+      // RequestDepartment in models/index.js.
       notes: department.hasOversightDashboard ? notesByDepartmentKey[department.key] || "" : "",
       items: [],
     };
@@ -147,21 +155,15 @@ function buildSignedDepartments(allDepartments, requestId, signedAtBase, notesBy
 
 async function upsertDemoUsers() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
-  await User.bulkWrite(
-    demoUsers.map(({ password, ...user }) => ({
-      updateOne: {
-        filter: { userID: user.userID },
-        update: { $set: { ...user, passwordHash } },
-        upsert: true,
-      },
-    }))
-  );
+  for (const { password, ...user } of demoUsers) {
+    await User.upsert({ ...user, passwordHash });
+  }
 }
 
 async function verifyDemoSeed() {
   const [seededUsers, ...requests] = await Promise.all([
-    User.find({ userID: { $in: demoUsers.map((user) => user.userID) } }),
-    ...Object.values(DEMO_REQUEST_IDS).map((id) => ClearanceRequest.findById(id)),
+    User.findAll({ where: { userID: { [Op.in]: demoUsers.map((user) => user.userID) } } }),
+    ...Object.values(DEMO_REQUEST_IDS).map((id) => findRequestById(id)),
   ]);
   const [completedRequest, awaitingItRequest, wagesNoteRequest, financeNoteRequest, bothNotesRequest] = requests;
 
@@ -232,9 +234,11 @@ async function run() {
   await upsertDemoUsers();
 
   console.log("[seed] replacing the demo clearance requests...");
-  const allDepartments = await Department.find({
-    key: { $in: departments.map((department) => department.key) },
-  }).sort({ order: 1 });
+  const allDepartments = await Department.findAll({
+    where: { key: { [Op.in]: departments.map((department) => department.key) } },
+    include: ["checklistItems"],
+    order: [["order", "ASC"]],
+  });
   if (allDepartments.length !== departments.length) {
     throw new Error(`Expected ${departments.length} departments, found ${allDepartments.length}`);
   }
@@ -250,10 +254,13 @@ async function run() {
   const fileManager = demoUsers.find((user) => user.role === "file_management");
   const itReviewer = demoItReviewerForItem("sap_account_removal");
 
-  await ClearanceRequest.deleteMany({ _id: { $in: Object.values(DEMO_REQUEST_IDS) } });
-  await ClearanceRequest.insertMany([
+  for (const requestId of Object.values(DEMO_REQUEST_IDS)) {
+    await deleteRequest(requestId);
+  }
+
+  await insertRequestWithDepartments(
     {
-      _id: DEMO_REQUEST_IDS.completed,
+      id: DEMO_REQUEST_IDS.completed,
       employeeNumber: "DEMO-1001",
       employeeFullName: "Ahmed Hassan (Completed Demo)",
       employeeJobTitle: "Senior Accountant",
@@ -263,11 +270,6 @@ async function run() {
       lastWorkingDay: new Date("2026-07-31T00:00:00.000Z"),
       createdByUserID: fileManager.userID,
       status: "completed",
-      departments: buildSignedDepartments(
-        allDepartments,
-        DEMO_REQUEST_IDS.completed,
-        signedAtBase
-      ),
       fileManagementApproved: true,
       fileManagementApprovedAt: approvedAt,
       fileManagementApprovedByUserID: fileManager.userID,
@@ -278,8 +280,12 @@ async function run() {
       createdAt: submittedAt,
       updatedAt: completedAt,
     },
+    buildSignedDepartments(allDepartments, DEMO_REQUEST_IDS.completed, signedAtBase)
+  );
+
+  await insertRequestWithDepartments(
     {
-      _id: DEMO_REQUEST_IDS.awaitingIt,
+      id: DEMO_REQUEST_IDS.awaitingIt,
       employeeNumber: "DEMO-1002",
       employeeFullName: "Mona Ibrahim (Awaiting IT Demo)",
       employeeJobTitle: "Contracts Specialist",
@@ -289,11 +295,6 @@ async function run() {
       lastWorkingDay: new Date("2026-08-31T00:00:00.000Z"),
       createdByUserID: fileManager.userID,
       status: "in_progress",
-      departments: buildSignedDepartments(
-        allDepartments,
-        DEMO_REQUEST_IDS.awaitingIt,
-        new Date(signedAtBase.getTime() + 24 * 60 * 60 * 1000)
-      ),
       fileManagementApproved: true,
       fileManagementApprovedAt: new Date(approvedAt.getTime() + 24 * 60 * 60 * 1000),
       fileManagementApprovedByUserID: fileManager.userID,
@@ -304,8 +305,16 @@ async function run() {
       createdAt: new Date(submittedAt.getTime() + 24 * 60 * 60 * 1000),
       updatedAt: new Date(approvedAt.getTime() + 24 * 60 * 60 * 1000),
     },
+    buildSignedDepartments(
+      allDepartments,
+      DEMO_REQUEST_IDS.awaitingIt,
+      new Date(signedAtBase.getTime() + 24 * 60 * 60 * 1000)
+    )
+  );
+
+  await insertRequestWithDepartments(
     {
-      _id: DEMO_REQUEST_IDS.wagesNote,
+      id: DEMO_REQUEST_IDS.wagesNote,
       employeeNumber: "DEMO-1003",
       employeeFullName: "Layla Ibrahim (Wages Note Demo)",
       employeeJobTitle: "Warehouse Supervisor",
@@ -315,12 +324,6 @@ async function run() {
       lastWorkingDay: new Date("2026-08-15T00:00:00.000Z"),
       createdByUserID: fileManager.userID,
       status: "completed",
-      departments: buildSignedDepartments(
-        allDepartments,
-        DEMO_REQUEST_IDS.wagesNote,
-        new Date(signedAtBase.getTime() + 2 * 24 * 60 * 60 * 1000),
-        { wages: WAGES_NOTE_TEXT }
-      ),
       fileManagementApproved: true,
       fileManagementApprovedAt: new Date(approvedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
       fileManagementApprovedByUserID: fileManager.userID,
@@ -331,8 +334,17 @@ async function run() {
       createdAt: new Date(submittedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
       updatedAt: new Date(completedAt.getTime() + 2 * 24 * 60 * 60 * 1000),
     },
+    buildSignedDepartments(
+      allDepartments,
+      DEMO_REQUEST_IDS.wagesNote,
+      new Date(signedAtBase.getTime() + 2 * 24 * 60 * 60 * 1000),
+      { wages: WAGES_NOTE_TEXT }
+    )
+  );
+
+  await insertRequestWithDepartments(
     {
-      _id: DEMO_REQUEST_IDS.financeNote,
+      id: DEMO_REQUEST_IDS.financeNote,
       employeeNumber: "DEMO-1004",
       employeeFullName: "Omar Said (Finance Note Demo)",
       employeeJobTitle: "Procurement Officer",
@@ -342,12 +354,6 @@ async function run() {
       lastWorkingDay: new Date("2026-08-20T00:00:00.000Z"),
       createdByUserID: fileManager.userID,
       status: "completed",
-      departments: buildSignedDepartments(
-        allDepartments,
-        DEMO_REQUEST_IDS.financeNote,
-        new Date(signedAtBase.getTime() + 3 * 24 * 60 * 60 * 1000),
-        { finance: FINANCE_NOTE_TEXT }
-      ),
       fileManagementApproved: true,
       fileManagementApprovedAt: new Date(approvedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
       fileManagementApprovedByUserID: fileManager.userID,
@@ -358,8 +364,17 @@ async function run() {
       createdAt: new Date(submittedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
       updatedAt: new Date(completedAt.getTime() + 3 * 24 * 60 * 60 * 1000),
     },
+    buildSignedDepartments(
+      allDepartments,
+      DEMO_REQUEST_IDS.financeNote,
+      new Date(signedAtBase.getTime() + 3 * 24 * 60 * 60 * 1000),
+      { finance: FINANCE_NOTE_TEXT }
+    )
+  );
+
+  await insertRequestWithDepartments(
     {
-      _id: DEMO_REQUEST_IDS.bothNotes,
+      id: DEMO_REQUEST_IDS.bothNotes,
       employeeNumber: "DEMO-1005",
       employeeFullName: "Nadia Fathy (Both Notes Demo)",
       employeeJobTitle: "HR Business Partner",
@@ -369,12 +384,6 @@ async function run() {
       lastWorkingDay: new Date("2026-08-25T00:00:00.000Z"),
       createdByUserID: fileManager.userID,
       status: "completed",
-      departments: buildSignedDepartments(
-        allDepartments,
-        DEMO_REQUEST_IDS.bothNotes,
-        new Date(signedAtBase.getTime() + 4 * 24 * 60 * 60 * 1000),
-        { wages: WAGES_NOTE_TEXT, finance: FINANCE_NOTE_TEXT }
-      ),
       fileManagementApproved: true,
       fileManagementApprovedAt: new Date(approvedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
       fileManagementApprovedByUserID: fileManager.userID,
@@ -385,7 +394,13 @@ async function run() {
       createdAt: new Date(submittedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
       updatedAt: new Date(completedAt.getTime() + 4 * 24 * 60 * 60 * 1000),
     },
-  ]);
+    buildSignedDepartments(
+      allDepartments,
+      DEMO_REQUEST_IDS.bothNotes,
+      new Date(signedAtBase.getTime() + 4 * 24 * 60 * 60 * 1000),
+      { wages: WAGES_NOTE_TEXT, finance: FINANCE_NOTE_TEXT }
+    )
+  );
 
   await verifyDemoSeed();
 

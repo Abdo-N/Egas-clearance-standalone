@@ -3,9 +3,19 @@ const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 const bcrypt = require("bcryptjs");
+const { Op } = require("sequelize");
 const Department = require("../models/Department");
 const User = require("../models/User");
-const ClearanceRequest = require("../models/ClearanceRequest");
+const { ClearanceRequest } = require("../models");
+const {
+  findRequestById,
+  findRequests,
+  createRequest,
+  updateRequest,
+  updateRequestDepartment,
+  updateRequestItem,
+  deleteRequest,
+} = require("../services/requestAssembly");
 const { requireAuth, requireRole, requireOwnDepartment } = require("../middleware/auth.middleware");
 const { generateClearancePdf } = require("../services/clearancePdf");
 const asyncHandler = require("../utils/asyncHandler");
@@ -80,14 +90,14 @@ function isDepartmentUnlocked(departments, deptKey) {
 // find a specific employee's request(s) by number OR name instead of
 // scrolling unbounded request history. Partial, case-insensitive match on
 // either field (not exact) so a caller can search without knowing the full
-// number or exact spelling of the name; regex metacharacters are escaped
-// since this becomes part of a Mongo regex, not treated as a pattern itself.
+// number or exact spelling of the name; LIKE metacharacters escaped since
+// this becomes part of a SQL ILIKE pattern, not treated as a pattern itself.
 function buildEmployeeSearchFilter(req) {
   const q = req.query.q?.trim();
   if (!q) return {};
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = { $regex: escaped, $options: "i" };
-  return { $or: [{ employeeNumber: regex }, { employeeFullName: regex }] };
+  const escaped = q.replace(/[%_\\]/g, "\\$&");
+  const pattern = { [Op.iLike]: `%${escaped}%` };
+  return { [Op.or]: [{ employeeNumber: pattern }, { employeeFullName: pattern }] };
 }
 
 // Only wages/finance (hasOversightDashboard, embedded in the JWT at login so
@@ -176,7 +186,7 @@ function withOwnDepartmentAnnotated(request, user) {
 // (name, sign date, email, landline) is included too (2026-08-11) -- File
 // Management now gets the same per-department detail oversight sees, so they
 // can actually reach a reviewer directly if a signature needs following up
-// on, not just see that "something" was signed.
+// on, not just see that "something" is signed.
 function summarizeForFileManagement(request) {
   const obj = request.toObject ? request.toObject() : request;
   return {
@@ -245,9 +255,23 @@ function isPendingForReviewer(dept, user) {
 }
 
 async function verifyPassword(userID, password) {
-  const user = await User.findOne({ userID });
+  const user = await User.findByPk(userID);
   if (!user) return false;
   return bcrypt.compare(password, user.passwordHash);
+}
+
+// Re-fetches a request fresh from the DB and, if the department/item write
+// that just landed changed what computeOverallStatus resolves to, persists
+// that too -- the SQL-era equivalent of the old single in-memory Mongoose
+// doc's `request.status = computeOverallStatus(...); await request.save();`.
+async function refreshAndSyncStatus(requestId) {
+  const request = await findRequestById(requestId);
+  const newStatus = computeOverallStatus(request.departments, request.accessRevoked);
+  if (newStatus !== request.status) {
+    await updateRequest(requestId, { status: newStatus });
+    request.status = newStatus;
+  }
+  return request;
 }
 
 /**
@@ -293,48 +317,30 @@ router.post("/", requireAuth, requireRole("file_management"), asyncHandler(async
   }
 
   const existing = await ClearanceRequest.findOne({
-    employeeNumber: employeeNumber.trim(),
-    status: "in_progress",
+    where: { employeeNumber: employeeNumber.trim(), status: "in_progress" },
   });
   if (existing) {
     return res.status(409).json({ error: "This employee already has a clearance request in progress" });
   }
 
-  const departments = await Department.find().sort({ order: 1 });
+  const departments = await Department.findAll({ include: ["checklistItems"], order: [["order", "ASC"]] });
   if (departments.length === 0) {
     return res.status(500).json({ error: "No departments configured yet -- run the seed script" });
   }
 
-  const request = await ClearanceRequest.create({
-    employeeNumber: employeeNumber.trim(),
-    employeeFullName: employeeFullName.trim(),
-    employeeJobTitle: employeeJobTitle?.trim() || "",
-    employeeDepartment_ar: employeeDepartment_ar?.trim() || "",
-    employeeDepartment_en: employeeDepartment_en?.trim() || "",
-    reason,
-    lastWorkingDay: parsedLastWorkingDay,
-    createdByUserID: req.user.userID,
-    departments: departments.map((d) => ({
-      departmentKey: d.key,
-      name_ar: d.name_ar,
-      name_en: d.name_en,
-      order: d.order,
-      tier: d.tier,
-      hasOversightDashboard: d.hasOversightDashboard,
-      signatureMode: d.signatureMode,
-      status: "pending",
-      items:
-        d.signatureMode === "itemized"
-          ? d.checklistItems.map((i) => ({
-              key: i.key,
-              label_ar: i.label_ar,
-              label_en: i.label_en,
-              assignedItemKey: i.key,
-              status: "pending",
-            }))
-          : [],
-    })),
-  });
+  const request = await createRequest(
+    {
+      employeeNumber: employeeNumber.trim(),
+      employeeFullName: employeeFullName.trim(),
+      employeeJobTitle: employeeJobTitle?.trim() || "",
+      employeeDepartment_ar: employeeDepartment_ar?.trim() || "",
+      employeeDepartment_en: employeeDepartment_en?.trim() || "",
+      reason,
+      lastWorkingDay: parsedLastWorkingDay,
+      createdByUserID: req.user.userID,
+    },
+    departments
+  );
 
   res.status(201).json(request);
 }));
@@ -353,19 +359,21 @@ router.get("/", requireAuth, requireRole("file_management", "reviewer"), asyncHa
   const searchFilter = buildEmployeeSearchFilter(req);
 
   if (canSeeFull(req.user)) {
-    const all = await ClearanceRequest.find(searchFilter).sort({ createdAt: -1 });
+    const all = await findRequests(searchFilter);
     return res.json(all.map((r) => withOwnDepartmentAnnotated(r, req.user)));
   }
 
   if (req.user.role === "file_management") {
-    const all = await ClearanceRequest.find(searchFilter).sort({ createdAt: -1 });
+    const all = await findRequests(searchFilter);
     return res.json(all.map(summarizeForFileManagement));
   }
 
-  const mine = await ClearanceRequest.find({
-    "departments.departmentKey": req.user.departmentKey,
-    ...searchFilter,
-  }).sort({ createdAt: -1 });
+  // Every request currently ever includes a snapshot of all 13 departments,
+  // so filtering at the DB level on "has a departments[] entry for my
+  // department" would never actually exclude anything -- the real filter
+  // (a department only unlocked for THIS reviewer once its tier is clear)
+  // happens below, same as before.
+  const mine = await findRequests(searchFilter);
 
   const visible = mine.filter((r) => {
     const dept = r.departments.find((d) => d.departmentKey === req.user.departmentKey);
@@ -379,7 +387,7 @@ router.get("/", requireAuth, requireRole("file_management", "reviewer"), asyncHa
 // department to still be pending -- a reviewer can reopen a request to see
 // what they already signed.
 router.get("/:id", requireAuth, asyncHandler(async (req, res) => {
-  const request = await ClearanceRequest.findById(req.params.id);
+  const request = await findRequestById(req.params.id);
   if (!request) return res.status(404).json({ error: "Not found" });
 
   if (canSeeFull(req.user)) return res.json(withOwnDepartmentAnnotated(request, req.user));
@@ -415,7 +423,7 @@ router.post(
     if (!password) return res.status(400).json({ error: "'password' is required to sign" });
     if (!req.file) return res.status(400).json({ error: "A signature photo or PDF is required to sign" });
 
-    const request = await ClearanceRequest.findById(req.params.id);
+    const request = await findRequestById(req.params.id);
     if (!request) return res.status(404).json({ error: "Not found" });
 
     const dept = request.departments.find((d) => d.departmentKey === req.params.deptKey);
@@ -438,30 +446,29 @@ router.post(
     const passwordOk = await verifyPassword(req.user.userID, password);
     if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
-    dept.status = "completed";
-    dept.signedByUserID = req.user.userID;
-    dept.signedByFullName = req.user.fullName;
-    dept.signedByLandlineNumber = req.user.landlineNumber;
-    dept.signedAt = new Date();
-    dept.evidence = {
-      fileUrl: `${request._id}/${req.file.filename}`,
-      mimeType: req.file.mimetype,
-      originalName: req.file.originalname,
-    };
-    // Only wages/finance show a notes field on the frontend and only they
-    // have a box position on the composited PDF (see clearancePdf.js) -- a
-    // note submitted for any other department is silently dropped rather
-    // than stored somewhere it can never be displayed.
-    if (dept.hasOversightDashboard) dept.notes = notes;
+    await updateRequestDepartment(request._id, dept.departmentKey, {
+      status: "completed",
+      signedByUserID: req.user.userID,
+      signedByFullName: req.user.fullName,
+      signedByLandlineNumber: req.user.landlineNumber,
+      signedAt: new Date(),
+      evidenceFileUrl: `${request._id}/${req.file.filename}`,
+      evidenceMimeType: req.file.mimetype,
+      evidenceOriginalName: req.file.originalname,
+      // Only wages/finance show a notes field on the frontend and only they
+      // have a box position on the composited PDF (see clearancePdf.js) -- a
+      // note submitted for any other department is silently dropped rather
+      // than stored somewhere it can never be displayed.
+      ...(dept.hasOversightDashboard ? { notes } : {}),
+    });
 
     // Signing never completes the request by itself -- see
     // computeOverallStatus. This only ever flips back to "in_progress" here
     // (e.g. re-evaluating after a late sign), never to "completed"; only
     // revoke-access can do that.
-    request.status = computeOverallStatus(request.departments, request.accessRevoked);
-    await request.save();
+    const updated = await refreshAndSyncStatus(request._id);
 
-    res.json(redactToOwnDepartment(request, req.user));
+    res.json(redactToOwnDepartment(updated, req.user));
   })
 );
 
@@ -484,7 +491,7 @@ router.post(
       return res.status(403).json({ error: "You can only sign your own assigned item" });
     }
 
-    const request = await ClearanceRequest.findById(req.params.id);
+    const request = await findRequestById(req.params.id);
     if (!request) return res.status(404).json({ error: "Not found" });
 
     const dept = request.departments.find((d) => d.departmentKey === req.params.deptKey);
@@ -505,25 +512,25 @@ router.post(
     const passwordOk = await verifyPassword(req.user.userID, password);
     if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
-    item.status = "completed";
-    item.signedByUserID = req.user.userID;
-    item.signedByFullName = req.user.fullName;
-    item.signedByLandlineNumber = req.user.landlineNumber;
-    item.signedAt = new Date();
-    item.evidence = {
-      fileUrl: `${request._id}/${req.file.filename}`,
-      mimeType: req.file.mimetype,
-      originalName: req.file.originalname,
-    };
+    await updateRequestItem(request._id, dept.departmentKey, req.params.itemKey, {
+      status: "completed",
+      signedByUserID: req.user.userID,
+      signedByFullName: req.user.fullName,
+      signedByLandlineNumber: req.user.landlineNumber,
+      signedAt: new Date(),
+      evidenceFileUrl: `${request._id}/${req.file.filename}`,
+      evidenceMimeType: req.file.mimetype,
+      evidenceOriginalName: req.file.originalname,
+    });
 
-    if (dept.items.every((i) => i.status === "completed")) {
-      dept.status = "completed";
+    const itemsNowComplete = dept.items.every((i) => (i.key === req.params.itemKey ? true : i.status === "completed"));
+    if (itemsNowComplete) {
+      await updateRequestDepartment(request._id, dept.departmentKey, { status: "completed" });
     }
 
-    request.status = computeOverallStatus(request.departments, request.accessRevoked);
-    await request.save();
+    const updated = await refreshAndSyncStatus(request._id);
 
-    res.json(redactToOwnDepartment(request, req.user));
+    res.json(redactToOwnDepartment(updated, req.user));
   })
 );
 
@@ -532,19 +539,23 @@ router.post(
 // signature set that no longer exists. Never touches the file on disk (the
 // old evidence stays there as an audit trail) -- just clears the request's
 // reference to it so the row reads as unsigned again until re-signed.
-function clearSignature(target) {
-  target.status = "pending";
-  target.signedByUserID = null;
-  target.signedByFullName = null;
-  target.signedByLandlineNumber = null;
-  target.signedAt = null;
-  target.evidence = null;
-}
+const CLEARED_SIGNATURE_FIELDS = {
+  status: "pending",
+  signedByUserID: null,
+  signedByFullName: null,
+  signedByLandlineNumber: null,
+  signedAt: null,
+  evidenceFileUrl: null,
+  evidenceMimeType: null,
+  evidenceOriginalName: null,
+};
 
-function revokeApproval(request) {
-  request.fileManagementApproved = false;
-  request.fileManagementApprovedAt = null;
-  request.fileManagementApprovedByUserID = null;
+async function revokeApproval(requestId) {
+  await updateRequest(requestId, {
+    fileManagementApproved: false,
+    fileManagementApprovedAt: null,
+    fileManagementApprovedByUserID: null,
+  });
 }
 
 /**
@@ -569,7 +580,7 @@ router.post(
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: "'password' is required" });
 
-    const request = await ClearanceRequest.findById(req.params.id);
+    const request = await findRequestById(req.params.id);
     if (!request) return res.status(404).json({ error: "Not found" });
 
     const isFileManagement = req.user.role === "file_management";
@@ -591,12 +602,11 @@ router.post(
     const passwordOk = await verifyPassword(req.user.userID, password);
     if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
-    clearSignature(dept);
-    revokeApproval(request);
-    request.status = computeOverallStatus(request.departments, request.accessRevoked);
-    await request.save();
+    await updateRequestDepartment(request._id, dept.departmentKey, CLEARED_SIGNATURE_FIELDS);
+    await revokeApproval(request._id);
+    const updated = await refreshAndSyncStatus(request._id);
 
-    res.json(isFileManagement ? summarizeForFileManagement(request) : redactToOwnDepartment(request, req.user));
+    res.json(isFileManagement ? summarizeForFileManagement(updated) : redactToOwnDepartment(updated, req.user));
   })
 );
 
@@ -619,7 +629,7 @@ router.post(
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: "'password' is required" });
 
-    const request = await ClearanceRequest.findById(req.params.id);
+    const request = await findRequestById(req.params.id);
     if (!request) return res.status(404).json({ error: "Not found" });
 
     const isFileManagement = req.user.role === "file_management";
@@ -644,13 +654,12 @@ router.post(
     const passwordOk = await verifyPassword(req.user.userID, password);
     if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
-    clearSignature(item);
-    dept.status = "pending";
-    revokeApproval(request);
-    request.status = computeOverallStatus(request.departments, request.accessRevoked);
-    await request.save();
+    await updateRequestItem(request._id, dept.departmentKey, req.params.itemKey, CLEARED_SIGNATURE_FIELDS);
+    await updateRequestDepartment(request._id, dept.departmentKey, { status: "pending" });
+    await revokeApproval(request._id);
+    const updated = await refreshAndSyncStatus(request._id);
 
-    res.json(isFileManagement ? summarizeForFileManagement(request) : redactToOwnDepartment(request, req.user));
+    res.json(isFileManagement ? summarizeForFileManagement(updated) : redactToOwnDepartment(updated, req.user));
   })
 );
 
@@ -669,7 +678,7 @@ router.post(
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: "'password' is required" });
 
-    const request = await ClearanceRequest.findById(req.params.id);
+    const request = await findRequestById(req.params.id);
     if (!request) return res.status(404).json({ error: "Not found" });
     if (request.accessRevoked) {
       return res.status(409).json({ error: "This employee's access has already been revoked" });
@@ -684,12 +693,14 @@ router.post(
     const passwordOk = await verifyPassword(req.user.userID, password);
     if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
-    request.fileManagementApproved = true;
-    request.fileManagementApprovedAt = new Date();
-    request.fileManagementApprovedByUserID = req.user.userID;
-    await request.save();
+    await updateRequest(request._id, {
+      fileManagementApproved: true,
+      fileManagementApprovedAt: new Date(),
+      fileManagementApprovedByUserID: req.user.userID,
+    });
 
-    res.json(summarizeForFileManagement(request));
+    const updated = await findRequestById(request._id);
+    res.json(summarizeForFileManagement(updated));
   })
 );
 
@@ -710,7 +721,7 @@ router.post("/:id/revoke-access", requireAuth, requireRole("reviewer"), asyncHan
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: "'password' is required" });
 
-  const request = await ClearanceRequest.findById(req.params.id);
+  const request = await findRequestById(req.params.id);
   if (!request) return res.status(404).json({ error: "Not found" });
 
   if (!allDepartmentsSigned(request.departments)) {
@@ -727,14 +738,19 @@ router.post("/:id/revoke-access", requireAuth, requireRole("reviewer"), asyncHan
   if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
   const now = new Date();
-  request.accessRevoked = true;
-  request.accessRevokedAt = now;
-  request.accessRevokedByUserID = req.user.userID;
-  request.status = computeOverallStatus(request.departments, true);
-  request.completedAt = now;
-  await request.save();
+  await updateRequest(request._id, {
+    accessRevoked: true,
+    accessRevokedAt: now,
+    accessRevokedByUserID: req.user.userID,
+    // allDepartmentsSigned() was just checked above and accessRevoked is now
+    // true, so computeOverallStatus would resolve to "completed" regardless
+    // -- set directly rather than re-deriving.
+    status: "completed",
+    completedAt: now,
+  });
 
-  res.json(redactToOwnDepartment(request, req.user));
+  const updated = await findRequestById(request._id);
+  res.json(redactToOwnDepartment(updated, req.user));
 }));
 
 /**
@@ -747,18 +763,18 @@ router.post("/:id/revoke-access", requireAuth, requireRole("reviewer"), asyncHan
  * cancel a request that's still mid-flight (an earlier version of this route
  * allowed deleting at any stage; that read as a bug in the UI, since a
  * request like "all 13 signed, awaiting IT" would show a delete button while
- * still actively in progress). This is a real hard delete: the MongoDB
- * document AND its uploaded evidence directory
- * (backend/uploads/<requestId>/) are both removed, unrecoverable -- there is
- * no soft-delete/archive flag anywhere in this schema. Any File Management
- * account can do this, same "any account, not just the creator" rule as
- * reopen.
+ * still actively in progress). This is a real hard delete: the database row
+ * (and its RequestDepartment/RequestItem children, via cascade) AND its
+ * uploaded evidence directory (backend/uploads/<requestId>/) are both
+ * removed, unrecoverable -- there is no soft-delete/archive flag anywhere in
+ * this schema. Any File Management account can do this, same "any account,
+ * not just the creator" rule as reopen.
  */
 router.post("/:id/delete", requireAuth, requireRole("file_management"), asyncHandler(async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: "'password' is required" });
 
-  const request = await ClearanceRequest.findById(req.params.id);
+  const request = await findRequestById(req.params.id);
   if (!request) return res.status(404).json({ error: "Not found" });
   if (request.status !== "completed") {
     return res.status(400).json({ error: "Only a fully completed request (access already revoked) can be deleted" });
@@ -768,7 +784,7 @@ router.post("/:id/delete", requireAuth, requireRole("file_management"), asyncHan
   if (!passwordOk) return res.status(401).json({ error: "Incorrect password" });
 
   await fs.promises.rm(path.join(UPLOAD_ROOT, request._id.toString()), { recursive: true, force: true });
-  await ClearanceRequest.findByIdAndDelete(request._id);
+  await deleteRequest(request._id);
 
   res.json({ deleted: true });
 }));
@@ -780,7 +796,7 @@ router.post("/:id/delete", requireAuth, requireRole("file_management"), asyncHan
 // available as soon as that department/item signs rather than waiting for
 // the whole request to finish and get approved.
 router.get("/:id/evidence/:deptKey/:itemKey?", requireAuth, asyncHandler(async (req, res) => {
-  const request = await ClearanceRequest.findById(req.params.id);
+  const request = await findRequestById(req.params.id);
   if (!request) return res.status(404).json({ error: "Not found" });
 
   const canView =
@@ -809,7 +825,7 @@ router.get("/:id/evidence/:deptKey/:itemKey?", requireAuth, asyncHandler(async (
 // evidence legibility before approving the clearance (see approve-clearance
 // above) -- they never get per-department evidence any other way.
 router.get("/:id/pdf", requireAuth, requireRole("file_management", "reviewer"), asyncHandler(async (req, res) => {
-  const request = await ClearanceRequest.findById(req.params.id);
+  const request = await findRequestById(req.params.id);
   if (!request) return res.status(404).json({ error: "Not found" });
 
   const allowed =

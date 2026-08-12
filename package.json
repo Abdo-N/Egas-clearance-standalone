@@ -5,7 +5,7 @@
     "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "dev:stop": "fuser -k 4000/tcp 5173/tcp 5174/tcp 2>/dev/null || true",
     "dev:fresh": "npm run dev:stop && npm run dev",
-    "dev:local": "npm run dev:stop && (docker start egas-mongo 2>/dev/null || docker run -d --name egas-mongo -p 27017:27017 -v egas-mongo-data:/data/db mongo:7) && MONGO_URI=mongodb://localhost:27017/egas_clearance npm run dev"
+    "dev:local": "npm run dev:stop && (docker start egas-postgres 2>/dev/null || docker run -d --name egas-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres -v egas-postgres-data:/var/lib/postgresql/data postgres:16) && DATABASE_URL=postgres://postgres:postgres@localhost:5432/egas_clearance npm run dev"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

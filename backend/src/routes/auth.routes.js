@@ -11,7 +11,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const router = express.Router();
 
 async function verifyPassword(userID, password) {
-  const user = await User.findOne({ userID });
+  const user = await User.findByPk(userID);
   if (!user) return false;
   return bcrypt.compare(password, user.passwordHash);
 }
@@ -40,7 +40,7 @@ router.post("/login", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "email and password are required" });
   }
 
-  const user = await User.findOne({ userID: email.trim().toLowerCase() });
+  const user = await User.findByPk(email.trim().toLowerCase());
   if (!user) return res.status(401).json({ error: "Invalid email or password" });
 
   const ok = await bcrypt.compare(password, user.passwordHash);
@@ -80,7 +80,7 @@ router.post("/register", asyncHandler(async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
-  const existing = await User.findOne({ userID: normalizedEmail });
+  const existing = await User.findByPk(normalizedEmail);
   if (existing) {
     return res.status(409).json({ error: "An account with that email already exists" });
   }
@@ -90,7 +90,7 @@ router.post("/register", asyncHandler(async (req, res) => {
     if (!departmentKey) {
       return res.status(400).json({ error: "'departmentKey' is required for a reviewer account" });
     }
-    department = await Department.findOne({ key: departmentKey });
+    department = await Department.findByPk(departmentKey, { include: ["checklistItems"] });
     if (!department) {
       return res.status(400).json({ error: "Unknown department" });
     }
@@ -100,7 +100,7 @@ router.post("/register", asyncHandler(async (req, res) => {
       if (!item) {
         return res.status(400).json({ error: "'assignedItemKey' must be one of this department's checklist items" });
       }
-      const itemTaken = await User.findOne({ departmentKey, assignedItemKey });
+      const itemTaken = await User.findOne({ where: { departmentKey, assignedItemKey } });
       if (itemTaken) {
         return res.status(409).json({ error: "That checklist item already has an account assigned to it" });
       }
@@ -137,9 +137,11 @@ router.post("/register", asyncHandler(async (req, res) => {
  * place it's read from.
  */
 router.get("/it-contacts", asyncHandler(async (req, res) => {
-  const contacts = await User.find({ departmentKey: "it" })
-    .select("fullName fullName_ar userID landlineNumber -_id")
-    .sort({ fullName: 1 });
+  const contacts = await User.findAll({
+    where: { departmentKey: "it" },
+    attributes: ["fullName", "fullName_ar", "userID", "landlineNumber"],
+    order: [["fullName", "ASC"]],
+  });
   res.json(contacts);
 }));
 
@@ -154,7 +156,7 @@ async function buildTokenPayload(user) {
   let departmentName_ar = null;
   let departmentName_en = null;
   if (user.role === "reviewer" && user.departmentKey) {
-    const dept = await Department.findOne({ key: user.departmentKey });
+    const dept = await Department.findByPk(user.departmentKey);
     hasOversightDashboard = Boolean(dept?.hasOversightDashboard);
     departmentName_ar = dept?.name_ar || null;
     departmentName_en = dept?.name_en || null;
@@ -200,7 +202,7 @@ router.post("/reset-password", requireAuth, requireRole("reviewer"), asyncHandle
   if (!actingPasswordOk) return res.status(401).json({ error: "Incorrect password" });
 
   const targetEmail = userID.trim().toLowerCase();
-  const target = await User.findOne({ userID: targetEmail });
+  const target = await User.findByPk(targetEmail);
   if (!target) return res.status(404).json({ error: "No account found with that email" });
 
   const oneTimePassword = generateOneTimePassword();
@@ -216,7 +218,7 @@ router.post("/reset-password", requireAuth, requireRole("reviewer"), asyncHandle
  * The only route a `mustResetPassword` token is allowed to hit (see
  * requireAuth in auth.middleware.js) -- still re-authenticates with the
  * one-time password itself (`currentPassword`) before accepting the new one,
- * same re-auth-to-confirm pattern as everywhere else in this app. Returns a
+ * same re-auth-to-confirm pattern as everywhere else. Returns a
  * fresh token/user pair, same shape as login/register, since the old token's
  * `mustResetPassword: true` is now stale.
  */
@@ -229,7 +231,7 @@ router.post("/set-new-password", requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `Password must be at least ${MIN_LENGTH} characters and include a symbol` });
   }
 
-  const user = await User.findOne({ userID: req.user.userID });
+  const user = await User.findByPk(req.user.userID);
   if (!user) return res.status(404).json({ error: "Account not found" });
 
   const currentOk = await bcrypt.compare(currentPassword, user.passwordHash);
