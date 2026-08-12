@@ -14,15 +14,6 @@
       "toggle": "Forgot your password?",
       "hint": "Contact any IT reviewer below and ask for a one-time password.",
       "empty": "No IT contacts found."
-    },
-    "demoAccounts": {
-      "summary": "Demo accounts",
-      "hint": "Choose an account to fill its email and password, then sign in.",
-      "fileManagement": "Document and Records Management",
-      "departments": "Department reviewers",
-      "it": "IT checklist reviewers",
-      "use": "Use",
-      "password": "Shared password:"
     }
   },
   "register": {
@@ -49,6 +40,10 @@
     "error": "Failed to create the account",
     "haveAccount": "Already have an account?",
     "signIn": "Sign in"
+  },
+  "setupWarning": {
+    "title": "Setup incomplete",
+    "intro": "This system can't be fully used yet -- no one has registered as a reviewer for the following, so a clearance request could never actually finish until they do:"
   },
   "setNewPassword": {
     "title": "Set a new password",

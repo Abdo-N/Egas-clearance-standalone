@@ -6,9 +6,7 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "seed:dev": "node src/seed/seed.js",
-    "seed:final": "node src/seed/seedDepartments.js",
-    "seed:local": "(docker start egas-mongo 2>/dev/null || docker run -d --name egas-mongo -p 27017:27017 -v egas-mongo-data:/data/db mongo:7) && MONGO_URI=mongodb://localhost:27017/egas_clearance node src/seed/seed.js"
+    "seed:final": "node src/seed/seedDepartments.js"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.3",

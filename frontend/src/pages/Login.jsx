@@ -6,12 +6,7 @@ import client from "../api/client";
 import SupportModal from "../components/SupportModal";
 import LanguageToggle from "../components/LanguageToggle";
 import PasswordInput from "../components/PasswordInput";
-import {
-  DEMO_PASSWORD,
-  demoDepartmentReviewers,
-  demoFileManagement,
-  demoItReviewers,
-} from "../demoAccounts";
+import SetupCoverageWarning from "../components/SetupCoverageWarning";
 import logoUrl from "../assets/egas-logo.png";
 
 // الخلفية الكبيرة للشاشة بالكامل (المنصة والغروب)
@@ -32,24 +27,6 @@ export default function Login() {
   useEffect(() => {
     client.get("/auth/it-contacts").then(({ data }) => setItContacts(data));
   }, []);
-
-  function fillDemoAccount(account) {
-    setEmail(account.email);
-    setPassword(DEMO_PASSWORD);
-    setError("");
-  }
-
-  function renderDemoAccount(account) {
-    return (
-      <button type="button" key={account.email} onClick={() => fillDemoAccount(account)}>
-        <span className="demo-account-identity">
-          <strong>{isArabic ? account.label_ar : account.label_en}</strong>
-          <small className="demo-account-email">{account.email}</small>
-        </span>
-        <span className="demo-account-use">{t("login.demoAccounts.use")}</span>
-      </button>
-    );
-  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -139,6 +116,8 @@ export default function Login() {
         <p style={{ margin: "0 0 20px 0", fontSize: "12px", color: "#666", textAlign: "center" }}>
           {t("login.subtitle")}
         </p>
+
+        <SetupCoverageWarning />
 
         {/* الحقول والنموذج */}
         <form onSubmit={handleSubmit} style={{ width: "100%" }}>
@@ -233,32 +212,6 @@ export default function Login() {
               ))}
             </div>
           )}
-        </details>
-
-        <details className="login-demo-accounts">
-          <summary>{t("login.demoAccounts.summary")}</summary>
-          <p className="demo-accounts-hint">{t("login.demoAccounts.hint")}</p>
-
-          <section className="demo-accounts-group">
-            <h4>{t("login.demoAccounts.fileManagement")}</h4>
-            <div className="demo-accounts-list">{renderDemoAccount(demoFileManagement)}</div>
-          </section>
-
-          <section className="demo-accounts-group">
-            <h4>{t("login.demoAccounts.departments")}</h4>
-            <div className="demo-accounts-list demo-accounts-list--scroll">
-              {demoDepartmentReviewers.map(renderDemoAccount)}
-            </div>
-          </section>
-
-          <section className="demo-accounts-group">
-            <h4>{t("login.demoAccounts.it")}</h4>
-            <div className="demo-accounts-list">{demoItReviewers.map(renderDemoAccount)}</div>
-          </section>
-
-          <p className="demo-accounts-note">
-            {t("login.demoAccounts.password")} <code>{DEMO_PASSWORD}</code>
-          </p>
         </details>
 
         {/* رابط إنشاء حساب */}
