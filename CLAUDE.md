@@ -2,8 +2,7 @@
 
 Read this before doing anything else in this repo. If you're a team member new to
 fullstack dev, read PROJECT_STATUS.md too — it tells you exactly what's built
-and what's still open. TASKS.md is a historical sprint plan from before the
-2026-08-03 revamp described below — treat it as an archive, not current guidance.
+and what's still open.
 
 ## What this project is
 
@@ -64,19 +63,25 @@ egas-clearance/
       utils/asyncHandler.js  wraps async route handlers so a thrown error
                               can't crash the whole process (Express 4 doesn't
                               catch rejected promises on its own)
-      utils/passwordPolicy.js  the 12-char + symbol rule self-registration enforces
+      utils/passwordPolicy.js  the 12-char + symbol rule admin-created
+                              accounts (and self-chosen new passwords) enforce
       seed/                  department templates plus deterministic demo
-                              accounts/requests; self-registration remains
-                              available through auth.routes.js
+                              accounts/requests; account creation otherwise
+                              only happens through an admin (auth.routes.js),
+                              or `seedDepartments.js`'s one-time bootstrap
+                              admin for a real deployment
     uploads/                 gitignored -- uploaded signature evidence, one
                               subfolder per request ID
     scripts/smoke-test.js   manual end-to-end test against a running seeded
-                              server (creates two throwaway accounts/request)
+                              server (admin-provisions its own throwaway
+                              accounts/request)
   frontend/
     src/
       api/client.js          axios instance, attaches JWT automatically
       context/AuthContext.jsx, ThemeContext.jsx
-      pages/                 Login, Register, FileManagementDashboard, ReviewerDashboard
+      pages/                 Login, FirstRunSetup, SetNewPassword,
+                              FileManagementDashboard, ReviewerDashboard,
+                              AdminDashboard
       components/            SignaturePanel, RequestOversightGrid, EvidencePreview,
                               DepartmentDashboard, DepartmentIcon, LanguageToggle,
                               TopBarControls, BusinessDoodleBg
@@ -85,7 +90,6 @@ egas-clearance/
       locales/               en.json, ar.json for i18next
       i18n.js
   PROJECT_STATUS.md   living status tracker — update this as you finish tasks
-  TASKS.md            historical sprint plan, superseded by this revamp
 ```
 
 ## Data layer: PostgreSQL via Sequelize (migrated 2026-08-12)
@@ -143,50 +147,170 @@ of this repo already follows (no CI pipeline either, see "Commands" below).
 `DATABASE_URL` (a standard `postgres://` connection string) replaces the old
 `MONGO_URI` in `.env`.
 
-## The most important design decision: self-registered accounts, no AD
+## The most important design decision: admin-managed accounts, no AD
 
 There is no Active Directory integration, mocked or otherwise, and there
-never was a real one planned for staff logins — `backend/src/models/User.js`
-accounts are created by the person themselves via `POST /auth/register`
-(`backend/src/routes/auth.routes.js`), self-selecting their own role and (for
-reviewers) department, with **no approval step**. The only integrity rule
-enforced at signup is that an IT checklist item can only ever have one
-account assigned to it (`assignedItemKey` uniqueness, checked against
-existing `User`s at registration) — otherwise anyone can sign up as File
-Management or as a reviewer for any department. `departmentKey`/
-`assignedItemKey` choices are validated against real `Department` data
-(`GET /api/departments` is intentionally public — no auth — so the
-registration form can populate its department/item pickers before the person
-has a token yet). Login is by email + password (`userID` is still the
-underlying field name on `User`, just holds an email now instead of an
-AD-style username — see the comment in `User.js`). Registration also
-requires a `landlineNumber` (company internal/extension line, "رقم الهاتف
-الداخلي") for every role, not just reviewers — this isn't an integrity rule
-like the IT item check, just a required field, enforced in the route rather
-than the schema so seed data can still create accounts directly. Every other
-file just receives a JWT with `{ userID, fullName, role, departmentKey,
-assignedItemKey, landlineNumber, hasOversightDashboard, mustResetPassword }`
-and doesn't care how the account was created.
+never was a real one planned for staff logins. There also used to be
+open self-registration (`POST /auth/register`, no approval step) through
+2026-08-13 — that route is gone. As of 2026-08-13 (Nader), an `admin` role
+is the only way a `backend/src/models/User.js` account comes into
+existence: `POST /auth/accounts` (`backend/src/routes/auth.routes.js`,
+admin-only, re-authenticating with the ACTING admin's own password first,
+same re-auth-to-confirm pattern as every other consequential action here)
+picks the new account's role (`file_management` or `reviewer`) and, for a
+reviewer, department (and, for IT, which checklist item), fields that used
+to be self-selected at sign-up. The one integrity rule from the old
+register route carries over unchanged: an IT checklist item can only ever
+have one account assigned to it (`assignedItemKey` uniqueness, checked
+against existing `User`s). `departmentKey`/`assignedItemKey` choices are
+still validated against real `Department` data (`GET /api/departments`
+stays intentionally public — no auth — so `AdminDashboard.jsx`'s
+create-account form can populate its department/item pickers). Login is by
+email + password (`userID` is still the underlying field name on `User`,
+just holds an email now instead of an AD-style username — see the comment
+in `User.js`). Account creation also requires a `landlineNumber` (company
+internal/extension line, "رقم الهاتف الداخلي") for every role, not just
+reviewers — this isn't an integrity rule like the IT item check, just a
+required field, enforced in the route rather than the schema so seed data
+can still create accounts directly. Every other file just receives a JWT
+with `{ userID, fullName, role, departmentKey, assignedItemKey,
+landlineNumber, hasOversightDashboard, mustResetPassword }` and doesn't care
+how the account was created — `role: "admin"` (or `"super_admin"`, see
+below) flows through this same payload shape, it just has `departmentKey`/
+`assignedItemKey` always `null` and never gets `hasOversightDashboard`
+(that lookup is gated on `role === "reviewer"`).
 
-**Forgotten passwords are IT-assisted, not self-service** (2026-08-11,
-Nader) — there's no email infrastructure in this app to send a reset link
-through, and it's a small enough internal team that this doesn't need one.
-Any of IT's 5 reviewers can issue ANY account (another IT reviewer, a plain
-department reviewer, or File Management) a one-time password via
-`POST /auth/reset-password`, re-authenticating with their own password first
-(same re-auth-to-confirm pattern used everywhere else). The plaintext
-one-time password is returned once, for IT to hand off directly (phone call,
-in person) — never emailed, never stored anywhere but the account's
-(temporary) `passwordHash`. That account's `mustResetPassword` flips to
-`true`, which `requireAuth` (`backend/src/middleware/auth.middleware.js`)
-enforces server-side, not just cosmetically: a token minted from a one-time
-password can hit exactly one route, `POST /auth/set-new-password` (re-auth
-with the one-time password, pick a real one), until that succeeds. So a
-locked-out person actually knows who to ask, the login page has a "Forgot
-your password?" disclosure listing every IT reviewer's name, email, and
-landline, backed by `GET /auth/it-contacts` — deliberately public/no-auth,
-same "public by necessity" reasoning as `GET /api/departments`, since
-someone locked out by definition has no token yet.
+**A second role, `super_admin`, sits one level above `admin` and exists
+solely to manage `admin` accounts (2026-08-13, Nader)** — the same
+"someone has to be able to manage the account managers, and it can't be the
+account managers themselves" reasoning that produced the `admin` role in
+the first place, one layer up. `POST /auth/accounts` /
+`POST /auth/reset-password` / `POST /auth/delete-account` /
+`GET /auth/accounts` are the SAME routes both roles use (no separate
+super-admin-only routes) — `auth.routes.js`'s `MANAGEABLE_ROLES_BY_ACTOR`
+map is the one place the split lives: an `admin` can create/list/reset/
+delete only `file_management`/`reviewer` accounts, a `super_admin` can
+create/list/reset/delete only `admin` accounts. **There is exactly ONE
+`super_admin` account, ever — it cannot create another one.**
+`MANAGEABLE_ROLES_BY_ACTOR.super_admin` is `["admin"]`, deliberately not
+including `"super_admin"` itself, so `POST /accounts` structurally 403s on
+`role: "super_admin"` no matter who calls it; the sole `super_admin` is
+created once, by `POST /auth/setup` on a genuinely empty database (see
+below), and that is the only way one ever comes into existence. Neither
+tier can touch the other's accounts, and critically, **an admin can no
+longer manage another admin at all** — closing off the one gap the old
+single-`admin`-role design had, where any admin could reset or delete any
+other admin including itself out. IT used to have a separate, unrestricted
+"any account, no exceptions" reset-password/delete-account power that
+served as an escape hatch for exactly this kind of lockout; that power was
+removed 2026-08-13 (Nader, same day as this split) — see "Forgotten
+passwords are admin/super_admin-assisted, not self-service" below for why,
+and for the lockout gap removing it reopens: nothing can reset or delete
+the sole `super_admin` account if it's ever locked out (the super_admin
+itself can't self-target reset-password/delete-account either, same as an
+admin already can't self-target). `GET /auth/accounts` is filtered
+server-side to each actor's
+manageable-roles set, not just hidden in the UI — same need-to-know
+philosophy `request.routes.js`'s redaction rules use elsewhere in this app.
+The frontend reuses one component, `AdminDashboard.jsx`, for both
+`/admin` and `/super-admin` (routed separately, gated by `RequireRole`
+same as every other dashboard) — nearly everything is shared UI (the
+account table, the create form, reset/delete), the only difference is which
+roles the create-form dropdown offers, driven by `user.role`.
+
+A brand-new deployment has no accounts yet to create the first one, so a
+database with zero accounts triggers an in-browser first-run setup flow
+instead of a login form nobody could use yet (2026-08-13, Nader — replaced
+an earlier design where `seed:final` auto-created a bootstrap admin with a
+fixed default password, dropped specifically to avoid a well-known default
+credential pair sitting in the codebase/docs waiting to be forgotten about
+after a real deployment). `GET /auth/setup-status` (public, no auth) reports
+`{ needsSetup: true }` whenever `User.count() === 0`; `Login.jsx` checks
+this on mount and redirects straight to `/setup`
+(`frontend/src/pages/FirstRunSetup.jsx`) before ever rendering the login
+form. That page collects the new account holder's own real name, email,
+landline, and a password THEY chose (not a generated default), submits to
+`POST /auth/setup` (public, no auth, but re-checks `User.count() === 0`
+server-side at request time and 409s permanently the instant any account
+exists — this is the one place in the whole app an unauthenticated request
+can create an account, so the guard is load-bearing, not cosmetic), and logs
+straight into the new account via the same token/user response shape
+`POST /auth/login` returns — "everything else flows like normal after
+that." The account this route creates is a **`super_admin`, not a plain
+`admin`** (changed the same day the role was split off) — it's the root of
+the whole hierarchy, landing on `/super-admin` to create the first real
+`admin`, who then creates every File Management/reviewer account from
+`/admin` in turn. `npm run seed:final` now only ever upserts the 13
+departments, same as before this feature existed; `npm run seed:dev` still
+seeds an equivalent demo super_admin AND demo admin directly
+(`superadmin@demo.local` / `admin@demo.local` — see
+`backend/src/seed/demo-users.data.js`), since the demo dataset is never a
+genuinely empty database this flow would trigger on anyway.
+`GET /departments/coverage` (see "The most important business rules" below)
+gained `missingAdmin` alongside its existing `missingFileManagement` for
+the same reason — a deployment with a `super_admin` but zero `admin`
+accounts is just as real a dead end (nobody could staff any department or
+File Management) as one with zero File Management accounts already was.
+
+**Forgotten passwords are admin/super_admin-assisted, not self-service**
+(2026-08-11, extended to admins 2026-08-13, split by tier the same day once
+`super_admin` was introduced, and IT's own unrestricted piece of this
+removed entirely later that same day, Nader) — there's no email
+infrastructure in this app to send a reset link through, and it's a small
+enough internal team that this doesn't need one. An admin or super_admin
+can issue a one-time password via `POST /auth/reset-password`,
+re-authenticating with their own password first (same re-auth-to-confirm
+pattern used everywhere else), scoped to what `MANAGEABLE_ROLES_BY_ACTOR`
+lets them manage (see above): an admin can reset a File Management/reviewer
+account (an IT reviewer included — IT is an ordinary reviewer account for
+this purpose, see below) but NOT another admin or the super_admin; a
+super_admin can reset an admin account but NOT a File Management/reviewer
+account (and not another super_admin — there isn't one, and it can't
+create one). The plaintext one-time password is returned once, for the
+acting user to hand off directly (phone call, in person) — never emailed,
+never stored anywhere but the account's (temporary) `passwordHash`. That
+account's `mustResetPassword` flips to `true`, which `requireAuth`
+(`backend/src/middleware/auth.middleware.js`) enforces server-side, not
+just cosmetically: a token minted from a one-time password can hit exactly
+one route, `POST /auth/set-new-password` (re-auth with the one-time
+password, pick a real one), until that succeeds. So a locked-out person
+actually knows who to ask, the login page has a "Forgot your password?"
+disclosure listing every admin/super_admin's name, email, and landline,
+backed by `GET /auth/admin-contacts` — deliberately public/no-auth, same
+"public by necessity" reasoning as `GET /api/departments`, since someone
+locked out by definition has no token yet. The same tier-scoped pairing
+applies to `POST /auth/delete-account` (permanently delete an account within
+what the acting user's tier manages — NOT the acting user's own account,
+since neither `admin` nor `super_admin` ever appears in its own
+`MANAGEABLE_ROLES_BY_ACTOR` entry, same self-target block described above;
+no restrictions beyond that scoping, that's judged the acting user's call to
+make, not something the route gates further).
+
+**IT lost its separate, unrestricted "any account, no exceptions"
+reset-password/delete-account power on 2026-08-13 (Nader)** — until then,
+any of IT's 5 reviewers could reset or delete literally any account
+(another IT reviewer, a plain department reviewer, File Management, an
+admin, or a super_admin), predating admin/super_admin accounts entirely and
+serving as the one deliberate escape hatch if a whole account tier got
+locked out. That power is gone: both routes now check ONLY
+`MANAGEABLE_ROLES_BY_ACTOR`, so an IT reviewer is just an ordinary
+`reviewer` account for this purpose, manageable by an admin exactly like
+any other reviewer, and unable to reset or delete anyone else's account,
+including another IT reviewer's. `ReviewerDashboard.jsx`'s IT-only
+"Reset a colleague's password" / "Delete an account" panels were removed
+along with the routes' IT bypass (there's nothing left for them to call);
+`Login.jsx`'s "Forgot your password?" disclosure now points at
+`GET /auth/admin-contacts` instead of `GET /auth/it-contacts` for the same
+reason — IT can no longer actually help with a forgotten password, an
+admin/super_admin can. `GET /auth/it-contacts` still exists and is still
+shown alongside admin contacts in the login page's "Need help?" widget
+(`SupportModal.jsx`) — IT remains a legitimate general contact point (e.g.
+for issues with the clearance process itself), just not for account
+resets/deletions anymore. This intentionally reopens a lockout gap that
+used to be closed: if the sole `super_admin` account is ever locked out,
+there is now no account of any kind that can reset or delete it (see the
+`super_admin` paragraph above) — accepted as a tradeoff of this change, not
+an oversight.
 
 Employees being cleared never log in and are not stored anywhere ahead of
 time — File Management types their data directly into the create-request
@@ -435,7 +559,7 @@ File Management enters all of this directly —
 `employeeDepartment_ar/en`, `reason`, `lastWorkingDay` — on the
 create-request form (`POST /requests`, validated there); NOT by the employee,
 who never interacts with the system, and not looked up from any directory
-(there isn't one — see "self-registered accounts, no AD" above). Since it's
+(there isn't one — see "admin-managed accounts, no AD" above). Since it's
 typed fresh per request rather than snapshotted from a stored record, there's
 no drift concern to design around here the way the department-list snapshot
 below has.
@@ -453,10 +577,30 @@ below has.
   Reviewers whose department has `hasOversightDashboard: true` (Wages,
   Finance) additionally get the full 13-department status grid for every
   request, not just their own.
+- `admin`: manages File Management and reviewer accounts and nothing else —
+  `AdminDashboard.jsx` (routed at `/admin`) lists every such account,
+  creates new ones (`file_management` or `reviewer`), and can reset a
+  password or permanently delete one. Cannot create, list, reset, or delete
+  another `admin` or a `super_admin` account (see `MANAGEABLE_ROLES_BY_ACTOR`
+  above). Not tied to a `departmentKey`, never appears in any
+  clearance-request route (`request.routes.js`'s role checks never include
+  `"admin"`, so an admin token 403s there same as any other role that isn't
+  `file_management`/`reviewer`) — this role exists solely for point 1 below,
+  it has no visibility into or action on clearance requests themselves.
+- `super_admin`: manages `admin` accounts and nothing else — the exact same
+  job `admin` does, one tier up. Reuses the same `AdminDashboard.jsx`
+  component (routed at `/super-admin`), just scoped to admin accounts
+  instead of File Management/reviewer ones. There is exactly ONE
+  `super_admin` account, ever — it cannot create another one (`role:
+  "super_admin"` never appears in any actor's `MANAGEABLE_ROLES_BY_ACTOR`
+  entry, including its own). Cannot create a File Management or reviewer
+  account directly, and like `admin`, never appears in any clearance-request
+  route.
 
-There is no super-admin role. Account provisioning is entirely self-service
-via `POST /auth/register` — see "self-registered accounts, no AD" above for
-the one integrity rule (IT item uniqueness) that's actually enforced.
+Account provisioning is admin/super_admin-managed, no sign-up — see
+"admin-managed accounts, no AD" above for the one integrity rule (IT item
+uniqueness) that's actually enforced, the admin/super_admin tier split, and
+for how a brand-new deployment bootstraps its first (super_admin) account.
 
 ## Commands
 
@@ -467,7 +611,7 @@ npm install
 cp .env.example .env     # then point DATABASE_URL at your local PostgreSQL
 npm run seed:dev           # upserts demo/reference data and replaces 5 fixed demo requests
 npm run dev                # nodemon, http://localhost:4000
-node scripts/smoke-test.js # exercises the full flow, registering its own throwaway accounts
+node scripts/smoke-test.js # exercises the full flow, admin-provisioning its own throwaway accounts
 ```
 
 Frontend:
@@ -477,19 +621,26 @@ npm install
 npm run dev   # http://localhost:5173, proxies /api to localhost:4000
 ```
 
-`npm run seed:dev` upserts a deterministic demo account set and replaces the
-five fixed demo requests without deleting unrelated registered accounts/requests.
-All demo accounts use `DemoPassw0rd!`; see
-`backend/src/seed/demo-users.data.js` for the complete login list. New accounts
-can still be created at `/register`.
+`npm run seed:dev` upserts a deterministic demo account set (now including
+one demo admin, `admin@demo.local`) and replaces the five fixed demo
+requests without deleting unrelated accounts/requests created since. All
+demo accounts use `DemoPassw0rd!`; see `backend/src/seed/demo-users.data.js`
+for the complete login list. New File Management/reviewer accounts are
+created by logging in as an admin and using `/admin`; new admin accounts by
+logging in as a super_admin and using `/super-admin` — there's no
+`/register` page anymore.
 
 For a real (non-demo) deployment, run `npm run seed:final` instead — it
 upserts only the 13 real departments (`backend/src/seed/upsertDepartments.js`,
-shared with `seed:dev`) and creates no demo accounts, requests, or evidence
-files. See "self-registered accounts, no AD" above: after `seed:final`,
-everyone who needs access registers their own real account at `/register`.
-`npm run seed:local`/root `npm run dev:local` spin up a throwaway local
-PostgreSQL via Docker (`egas-postgres` container) for offline dev.
+shared with `seed:dev`) and creates no accounts, requests, or evidence
+files. Visiting the site with zero accounts in the database triggers the
+in-browser first-run setup flow (see "admin-managed accounts, no AD" above)
+— fill in that first person's own real name, email, landline, and password
+there, and it creates them as a `super_admin`, logging straight into
+`/super-admin` to create the first real `admin` account, who then creates
+every File Management/reviewer account from `/admin` in turn. `npm run
+seed:local`/root `npm run dev:local` spin up a throwaway local PostgreSQL
+via Docker (`egas-postgres` container) for offline dev.
 
 **Deployment target (decided 2026-08-10):** a company-controlled Windows
 Server running a local PostgreSQL instance (MongoDB through 2026-08-11, see

@@ -405,7 +405,11 @@ p {
   position: relative;
 }
 
-.password-input-wrapper input {
+/* Two classes (0,2,1) so this always wins over any single-class container
+   rule (e.g. `.form-group input`, `.inline-reauth-form input`, both 0,1,1)
+   regardless of source order -- see the comment in PasswordInput.jsx. */
+.password-input-wrapper .password-input-control {
+  width: 100%;
   padding-inline-end: 42px;
 }
 
@@ -711,8 +715,7 @@ p {
 }
 
 .support-toggle:focus-visible,
-.support-close:focus-visible,
-.support-submit:focus-visible {
+.support-close:focus-visible {
   outline: 3px solid rgba(255, 255, 255, 0.85);
   outline-offset: 3px;
 }
@@ -739,30 +742,6 @@ p {
 
 .support-close:hover {
   background: var(--bg-page) !important;
-}
-
-.support-hotline {
-  border: 1px solid var(--line);
-  background: var(--bg-page) !important;
-}
-
-.support-form input {
-  min-height: 44px;
-  border-color: var(--line) !important;
-  background: var(--card);
-  color: var(--ink-900);
-}
-
-.support-form input:focus {
-  outline: none;
-  border-color: var(--green-700) !important;
-  box-shadow: 0 0 0 3px rgba(8, 115, 63, 0.14);
-}
-
-.support-submit {
-  min-height: 44px;
-  background: var(--green-700) !important;
-  font-family: inherit;
 }
 
 @media (max-width: 480px) {

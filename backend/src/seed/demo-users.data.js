@@ -46,6 +46,26 @@ const itReviewers = [
 
 const demoUsers = [
   {
+    userID: "superadmin@demo.local",
+    password: DEMO_PASSWORD,
+    fullName: "Super Admin Demo Account",
+    fullName_ar: "حساب المسؤول الرئيسي التجريبي",
+    role: "super_admin",
+    departmentKey: null,
+    assignedItemKey: null,
+    landlineNumber: "2",
+  },
+  {
+    userID: "admin@demo.local",
+    password: DEMO_PASSWORD,
+    fullName: "Admin Demo Account",
+    fullName_ar: "حساب المسؤول التجريبي",
+    role: "admin",
+    departmentKey: null,
+    assignedItemKey: null,
+    landlineNumber: "1",
+  },
+  {
     userID: "file.management@demo.local",
     password: DEMO_PASSWORD,
     fullName: "Document and Records Management Demo",

@@ -17,9 +17,13 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
-  // Same response shape as login -- register the account and log straight in.
-  async function register(payload) {
-    const { data } = await client.post("/auth/register", payload);
+  // Called from FirstRunSetup.jsx -- creates the very first admin account on
+  // a brand-new deployment (POST /auth/setup, only works once, see
+  // auth.routes.js) and logs straight into it, same response shape as
+  // login, so setup "flows like normal after that" instead of bouncing back
+  // to a login screen with credentials the person just typed a moment ago.
+  async function completeSetup(payload) {
+    const { data } = await client.post("/auth/setup", payload);
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
     setUser(data.user);
@@ -28,7 +32,7 @@ export function AuthProvider({ children }) {
 
   // Called from the mandatory "set a new password" screen a one-time-password
   // login lands on (see auth.middleware.js -- that token can't reach any
-  // other route until this succeeds). Same response shape as login/register,
+  // other route until this succeeds). Same response shape as login,
   // with mustResetPassword now false, so the frontend gate clears.
   async function setNewPassword(currentPassword, newPassword) {
     const { data } = await client.post("/auth/set-new-password", { currentPassword, newPassword });
@@ -45,7 +49,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, register, setNewPassword, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, login, completeSetup, setNewPassword, logout }}>{children}</AuthContext.Provider>
   );
 }
 

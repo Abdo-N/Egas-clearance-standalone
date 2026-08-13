@@ -1,14 +1,16 @@
-import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
+import client from "../api/client";
 import LanguageToggle from "../components/LanguageToggle";
 import PasswordInput from "../components/PasswordInput";
 import { dashboardPathFor } from "../utils/dashboardPath";
 import logoUrl from "../assets/egas-logo.png";
 import mainBackground from "../assets/egas-bg.jpg";
 
-// Mirrors backend/src/utils/passwordPolicy.js -- same duplication as AdminDashboard.jsx.
+// Mirrors backend/src/utils/passwordPolicy.js -- same duplication as every
+// other password field in this app (AdminDashboard.jsx, SetNewPassword.jsx).
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_SYMBOL_PATTERN = /[^A-Za-z0-9]/;
 
@@ -16,52 +18,65 @@ function isPasswordStrongEnough(password) {
   return password.length >= PASSWORD_MIN_LENGTH && PASSWORD_SYMBOL_PATTERN.test(password);
 }
 
-// Landing screen for a login that used a one-time password IT issued (see
-// POST /auth/reset-password) -- the backend refuses every other route until
-// this succeeds (requireAuth in auth.middleware.js), so this page has no
-// "skip for now" option.
-export default function SetNewPassword() {
+// The very first screen a brand-new deployment's database (zero accounts)
+// lands on -- Login.jsx redirects here on mount once GET /auth/setup-status
+// says needsSetup. POST /auth/setup (see auth.routes.js) only ever succeeds
+// once, so this page re-checks the same status itself and bounces back to
+// /login if someone navigates here directly after setup is already done --
+// otherwise it'd sit there as a dead-end form that just 409s on submit.
+export default function FirstRunSetup() {
   const { t } = useTranslation();
-  const { user, setNewPassword } = useAuth();
+  const { completeSetup } = useAuth();
   const navigate = useNavigate();
 
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPasswordValue, setNewPasswordValue] = useState("");
+  const [checking, setChecking] = useState(true);
+  const [fullName, setFullName] = useState("");
+  const [landlineNumber, setLandlineNumber] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  if (!user) return <Navigate to="/login" replace />;
-  if (!user.mustResetPassword) {
-    return <Navigate to={dashboardPathFor(user.role)} replace />;
-  }
+  useEffect(() => {
+    client
+      .get("/auth/setup-status")
+      .then(({ data }) => {
+        if (!data.needsSetup) navigate("/login", { replace: true });
+        else setChecking(false);
+      })
+      .catch(() => setChecking(false));
+  }, [navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
-    if (newPasswordValue !== confirmPassword) {
+    if (password !== confirmPassword) {
       setError(t("passwordRules.mismatch"));
       return;
     }
-    if (!isPasswordStrongEnough(newPasswordValue)) {
+    if (!isPasswordStrongEnough(password)) {
       setError(t("passwordRules.tooWeak"));
       return;
     }
 
     setLoading(true);
     try {
-      const updated = await setNewPassword(currentPassword, newPasswordValue);
-      navigate(dashboardPathFor(updated.role));
+      const user = await completeSetup({ email, password, fullName, landlineNumber });
+      navigate(dashboardPathFor(user.role));
     } catch (err) {
-      setError(err.response?.data?.error || t("setNewPassword.error"));
+      setError(err.response?.data?.error || t("firstRunSetup.error"));
     } finally {
       setLoading(false);
     }
   }
 
+  if (checking) return null;
+
   return (
-    <div className="auth-page"
+    <div
+      className="auth-page"
       style={{
         minHeight: "100vh",
         width: "100vw",
@@ -69,10 +84,11 @@ export default function SetNewPassword() {
         alignItems: "center",
         justifyContent: "center",
         position: "relative",
-        padding: "24px 0"
+        padding: "24px 0",
       }}
     >
-      <div className="auth-page-background"
+      <div
+        className="auth-page-background"
         style={{
           position: "fixed",
           inset: 0,
@@ -80,7 +96,7 @@ export default function SetNewPassword() {
           backgroundSize: "cover",
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
-          zIndex: 0
+          zIndex: 0,
         }}
       />
 
@@ -97,7 +113,7 @@ export default function SetNewPassword() {
           flexDirection: "column",
           alignItems: "center",
           position: "relative",
-          zIndex: 10
+          zIndex: 10,
         }}
       >
         <div style={{ textAlign: "center", marginBottom: "8px" }}>
@@ -105,43 +121,51 @@ export default function SetNewPassword() {
         </div>
 
         <h2 style={{ margin: "0 0 5px 0", fontSize: "22px", color: "#111", fontWeight: "600" }}>
-          {t("setNewPassword.title")}
+          {t("firstRunSetup.title")}
         </h2>
         <p style={{ margin: "0 0 20px 0", fontSize: "12px", color: "#666", textAlign: "center" }}>
-          {t("setNewPassword.subtitle")}
+          {t("firstRunSetup.subtitle")}
         </p>
 
         <form onSubmit={handleSubmit} style={{ width: "100%" }}>
           <div style={{ marginBottom: "15px" }}>
             <label style={{ display: "block", fontSize: "13px", color: "#333", marginBottom: "5px", fontWeight: "500" }}>
-              {t("setNewPassword.currentPasswordLabel")}
+              {t("firstRunSetup.fullNameLabel")}
             </label>
-            <PasswordInput
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-              style={inputStyle}
-            />
+            <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} required style={inputStyle} />
+          </div>
+
+          <div style={{ marginBottom: "15px" }}>
+            <label style={{ display: "block", fontSize: "13px", color: "#333", marginBottom: "5px", fontWeight: "500" }}>
+              {t("firstRunSetup.landlineNumberLabel")}
+            </label>
+            <input type="tel" value={landlineNumber} onChange={(e) => setLandlineNumber(e.target.value)} required style={inputStyle} />
+          </div>
+
+          <div style={{ marginBottom: "15px" }}>
+            <label style={{ display: "block", fontSize: "13px", color: "#333", marginBottom: "5px", fontWeight: "500" }}>
+              {t("firstRunSetup.emailLabel")}
+            </label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
           </div>
 
           <div style={{ marginBottom: "5px" }}>
             <label style={{ display: "block", fontSize: "13px", color: "#333", marginBottom: "5px", fontWeight: "500" }}>
-              {t("setNewPassword.newPasswordLabel")}
+              {t("firstRunSetup.passwordLabel")}
             </label>
             <PasswordInput
-              value={newPasswordValue}
-              onChange={(e) => setNewPasswordValue(e.target.value)}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
               required
-              style={inputStyle}
+              style={passwordInputStyle}
             />
           </div>
           <p
             style={{
               margin: "4px 0 12px",
               fontSize: "11px",
-              color: newPasswordValue && !isPasswordStrongEnough(newPasswordValue) ? "#d93025" : "#888"
+              color: password && !isPasswordStrongEnough(password) ? "#d93025" : "#888",
             }}
           >
             {t("passwordRules.hint")}
@@ -156,7 +180,7 @@ export default function SetNewPassword() {
               onChange={(e) => setConfirmPassword(e.target.value)}
               autoComplete="new-password"
               required
-              style={inputStyle}
+              style={passwordInputStyle}
             />
           </div>
 
@@ -177,10 +201,10 @@ export default function SetNewPassword() {
               padding: "12px",
               fontSize: "14px",
               fontWeight: "600",
-              cursor: loading ? "not-allowed" : "pointer"
+              cursor: loading ? "not-allowed" : "pointer",
             }}
           >
-            {loading ? t("setNewPassword.submitting") : t("setNewPassword.submit")}
+            {loading ? t("firstRunSetup.submitting") : t("firstRunSetup.submit")}
           </button>
         </form>
       </div>
@@ -193,11 +217,12 @@ export default function SetNewPassword() {
 const inputStyle = {
   width: "100%",
   padding: "10px 12px",
-  paddingInlineEnd: "42px",
   borderRadius: "6px",
   border: "1px solid #d1d5db",
   backgroundColor: "#eaecee",
   fontSize: "14px",
   outline: "none",
-  boxSizing: "border-box"
+  boxSizing: "border-box",
 };
+
+const passwordInputStyle = { ...inputStyle, paddingInlineEnd: "42px" };

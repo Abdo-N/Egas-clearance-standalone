@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
+import { dashboardPathFor } from "../utils/dashboardPath";
 import client from "../api/client";
 import SupportModal from "../components/SupportModal";
 import LanguageToggle from "../components/LanguageToggle";
@@ -9,9 +10,11 @@ import PasswordInput from "../components/PasswordInput";
 import SetupCoverageWarning from "../components/SetupCoverageWarning";
 import {
   DEMO_PASSWORD,
+  demoAdmin,
   demoDepartmentReviewers,
   demoFileManagement,
   demoItReviewers,
+  demoSuperAdmin,
 } from "../demoAccounts";
 import logoUrl from "../assets/egas-logo.png";
 
@@ -28,10 +31,30 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [itContacts, setItContacts] = useState([]);
+  const [adminContacts, setAdminContacts] = useState([]);
+  const [checkingSetup, setCheckingSetup] = useState(true);
 
+  // A brand-new deployment (zero accounts) redirects straight to /setup
+  // (FirstRunSetup.jsx) instead of showing a login form nobody could ever
+  // actually use yet -- see CLAUDE.md "admin-managed accounts, no AD".
+  // Rendered as null (not the login form) until this resolves, so there's
+  // no flash of a login screen right before bouncing away from it.
   useEffect(() => {
-    client.get("/auth/it-contacts").then(({ data }) => setItContacts(data));
+    client
+      .get("/auth/setup-status")
+      .then(({ data }) => {
+        if (data.needsSetup) navigate("/setup", { replace: true });
+        else setCheckingSetup(false);
+      })
+      .catch(() => setCheckingSetup(false));
+  }, [navigate]);
+
+  // Points at an admin/super_admin, not IT -- IT's unrestricted
+  // reset-password power was removed 2026-08-13, so an admin (or, for a
+  // locked-out admin, the super_admin -- GET /admin-contacts already
+  // returns both) is who can actually issue a one-time password now.
+  useEffect(() => {
+    client.get("/auth/admin-contacts").then(({ data }) => setAdminContacts(data));
   }, []);
 
   function fillDemoAccount(account) {
@@ -61,7 +84,7 @@ export default function Login() {
       if (user.mustResetPassword) {
         navigate("/set-new-password");
       } else {
-        navigate(user.role === "file_management" ? "/file-management" : "/reviewer");
+        navigate(dashboardPathFor(user.role));
       }
     } catch (err) {
       setError(t("login.error") || "اسم المستخدم أو كلمة المرور غير صحيحة");
@@ -69,6 +92,8 @@ export default function Login() {
       setLoading(false);
     }
   }
+
+  if (checkingSetup) return null;
 
   return (
     <div className="auth-page"
@@ -219,14 +244,18 @@ export default function Login() {
         <details className="login-demo-accounts">
           <summary>{t("login.forgotPassword.toggle")}</summary>
           <p className="demo-accounts-hint">{t("login.forgotPassword.hint")}</p>
-          {itContacts.length === 0 ? (
+          {adminContacts.length === 0 ? (
             <p className="demo-accounts-hint">{t("login.forgotPassword.empty")}</p>
           ) : (
             <div className="demo-accounts-list">
-              {itContacts.map((contact) => (
+              {adminContacts.map((contact) => (
                 <div className="it-contact-row" key={contact.userID}>
                   <span className="demo-account-identity">
-                    <strong>{isArabic ? contact.fullName_ar || contact.fullName : contact.fullName}</strong>
+                    <strong>
+                      {isArabic ? contact.fullName_ar || contact.fullName : contact.fullName}
+                      {" · "}
+                      {contact.role === "super_admin" ? t("support.roleSuperAdmin") : t("support.roleAdmin")}
+                    </strong>
                   </span>
                   <span className="it-contact-links">
                     <a href={`mailto:${contact.userID}`}>{contact.userID}</a>
@@ -242,6 +271,16 @@ export default function Login() {
           <details className="login-demo-accounts">
             <summary>{t("login.demoAccounts.summary")}</summary>
             <p className="demo-accounts-hint">{t("login.demoAccounts.hint")}</p>
+
+            <section className="demo-accounts-group">
+              <h4>{t("login.demoAccounts.superAdmin")}</h4>
+              <div className="demo-accounts-list">{renderDemoAccount(demoSuperAdmin)}</div>
+            </section>
+
+            <section className="demo-accounts-group">
+              <h4>{t("login.demoAccounts.admin")}</h4>
+              <div className="demo-accounts-list">{renderDemoAccount(demoAdmin)}</div>
+            </section>
 
             <section className="demo-accounts-group">
               <h4>{t("login.demoAccounts.fileManagement")}</h4>
@@ -266,13 +305,6 @@ export default function Login() {
           </details>
         )}
 
-        {/* رابط إنشاء حساب */}
-        <p className="auth-footer" style={{ margin: "16px 0 0", fontSize: "13px", color: "#666", textAlign: "center" }}>
-          {t("login.noAccount")}{" "}
-          <Link to="/register" style={{ color: "#008069", fontWeight: "600", textDecoration: "none" }}>
-            {t("login.createAccount")}
-          </Link>
-        </p>
       </div>
 
       <SupportModal />

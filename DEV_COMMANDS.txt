@@ -1,0 +1,68 @@
+EGAS Clearance -- Dev Commands
+==============================
+
+ROOT (run from the repo root -- starts backend + frontend together)
+---------------------------------------------------------------------
+npm run dev
+    Starts both: nodemon backend on :4000, Vite frontend on :5173.
+
+npm run dev:fresh
+    Kills anything already on 4000/5173/5174, then runs `npm run dev`.
+
+npm run dev:local
+    Same as `dev`, but spins up (or reuses) a Docker Postgres container
+    named `egas-postgres` on :5432 and points DATABASE_URL at it instead
+    of whatever's in your .env. Good for offline dev.
+
+npm run dev:stop
+    Just the port-killing part of dev:fresh, standalone.
+
+
+BACKEND (cd backend)
+---------------------------------------------------------------------
+npm run dev
+    nodemon dev server alone, :4000.
+
+npm start
+    Same, but plain `node` (no nodemon) -- closer to how it'd run in
+    production.
+
+npm run seed:dev
+    Upserts the 13 departments + a full demo dataset: one demo admin,
+    File Management, all department/IT reviewers, 5 demo clearance
+    requests. Password for every demo account: DemoPassw0rd!
+
+npm run seed:final
+    Upserts ONLY the 13 departments. Creates no accounts, requests, or
+    evidence files. This is what you'd run for a real deployment --
+    visiting the site afterward with zero accounts in the DB triggers
+    the in-browser first-run admin setup flow (redirects to /setup).
+
+npm run seed:local
+    Docker Postgres + seed:dev in one shot.
+
+node scripts/smoke-test.js
+    Full end-to-end API test against whatever's already seeded and
+    running. Needs seed:dev state (demo accounts), not seed:final.
+
+
+FRONTEND (cd frontend)
+---------------------------------------------------------------------
+npm run dev
+    Vite dev server, :5173, proxies /api to :4000.
+
+npm run build
+    Production build to dist/.
+
+npm run preview
+    Serve that production build locally.
+
+
+NOTES
+---------------------------------------------------------------------
+- Demo password (seed:dev): DemoPassw0rd!
+- Real deployment flow: run seed:final, then visit the site -- it'll
+  prompt you to create the admin account directly in the browser
+  (no default credentials anywhere).
+- Full account-management design + business rules are documented in
+  CLAUDE.md at the repo root; task history/status in PROJECT_STATUS.md.

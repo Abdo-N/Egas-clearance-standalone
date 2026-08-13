@@ -36,7 +36,7 @@ function IconEyeOff() {
  * input, so existing style/className/autoComplete/required usage keeps
  * working unchanged.
  */
-export default function PasswordInput({ wrapperClassName, wrapperStyle, ...inputProps }) {
+export default function PasswordInput({ wrapperClassName, wrapperStyle, className, ...inputProps }) {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
 
@@ -44,7 +44,19 @@ export default function PasswordInput({ wrapperClassName, wrapperStyle, ...input
 
   return (
     <div className={`password-input-wrapper${wrapperClassName ? ` ${wrapperClassName}` : ""}`} style={wrapperStyle}>
-      <input {...inputProps} type={visible ? "text" : "password"} />
+      {/* `.password-input-control` (not just the bare element type) is
+          deliberate -- every page that embeds this component inside its own
+          container (`.form-group input`, `.inline-reauth-form input`, ...)
+          defines its own `X input` padding/width rule at equal (0,1,1)
+          specificity, which silently wins by source order whenever it's
+          declared later in styles.css than `.password-input-wrapper input`
+          was. That clobbered the reserved icon padding here in some
+          contexts (text visibly ran under the toggle button) even though
+          it worked fine in others -- a real bug, not just a style nitpick.
+          Two classes (0,2,1) beats any single-class container rule (0,1,1)
+          unconditionally, so this can't regress again regardless of what
+          CSS a future container adds or which order rules end up in. */}
+      <input {...inputProps} className={`password-input-control${className ? ` ${className}` : ""}`} type={visible ? "text" : "password"} />
       <button
         type="button"
         className="password-toggle-button"

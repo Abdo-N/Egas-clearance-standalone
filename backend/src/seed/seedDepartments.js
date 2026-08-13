@@ -8,7 +8,7 @@ async function run() {
   console.log("[seed] upserting departments...");
   const departments = await upsertDepartments();
 
-  console.log(`[seed] done. Upserted ${departments.length} departments. No demo accounts or requests were created.`);
+  console.log(`[seed] done. Upserted ${departments.length} departments. No accounts, requests, or evidence were created -- visit the site and it'll prompt to create the first super_admin account (see CLAUDE.md "admin-managed accounts, no AD").`);
   process.exit(0);
 }
 

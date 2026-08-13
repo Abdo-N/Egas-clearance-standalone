@@ -1,6 +1,18 @@
 // Keep this list in sync with backend/src/seed/demo-users.data.js.
 export const DEMO_PASSWORD = "DemoPassw0rd!";
 
+export const demoSuperAdmin = {
+  email: "superadmin@demo.local",
+  label_en: "Super Admin",
+  label_ar: "المسؤول الرئيسي",
+};
+
+export const demoAdmin = {
+  email: "admin@demo.local",
+  label_en: "Admin",
+  label_ar: "المسؤول",
+};
+
 export const demoFileManagement = {
   email: "file.management@demo.local",
   label_en: "Document and Records Management",

@@ -24,6 +24,8 @@ export default function SetupCoverageWarning() {
       <strong>{t("setupWarning.title")}</strong>
       <p>{t("setupWarning.intro")}</p>
       <ul>
+        {coverage.missingFileManagement && <li>{t("admin.roleFileManagement")}</li>}
+        {coverage.missingAdmin && <li>{t("admin.roleAdmin")}</li>}
         {coverage.missingDepartments.map((dept) => (
           <li key={dept.key}>{isAr ? dept.name_ar : dept.name_en}</li>
         ))}

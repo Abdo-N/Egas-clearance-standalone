@@ -1,11 +1,23 @@
 /**
  * Manual end-to-end smoke test for the revamped clearance flow.
  *
- * Requires a running local MongoDB and the server already started
+ * Requires a running local PostgreSQL and the server already started
  * (npm run seed:dev && npm run dev in another terminal), then:
  *   node scripts/smoke-test.js
  *
  * Exercises the real rules:
+ *   - Account provisioning is admin-managed: no self-registration, every
+ *     account is either seeded demo data or created via POST /auth/accounts
+ *     by the demo admin/super_admin. POST /auth/setup (first-run super_admin
+ *     bootstrap) is checked too, but only its already-done rejection path --
+ *     exercising the actual first-run success path needs a genuinely empty
+ *     database, which this seeded run intentionally isn't.
+ *   - A super_admin manages ONLY admin accounts; an admin manages ONLY File
+ *     Management/reviewer accounts -- neither tier can create, reset, or
+ *     delete the other's accounts (IT keeps its unrestricted "any account"
+ *     power, unchanged). There is exactly ONE super_admin, ever: it can't
+ *     create a second one (POST /accounts 403s on role: "super_admin" no
+ *     matter who calls it).
  *   - File Management (not the employee) files the request.
  *   - Tier-1 departments (1-11, incl. IT) sign in parallel, no gating.
  *   - Tier-2 departments (wages, finance) are locked until every tier-1
@@ -55,12 +67,21 @@ function futureIsoDate(daysFromNow = 90) {
   return date.toISOString().slice(0, 10);
 }
 
-async function register({ slug, fullName, role, departmentKey, assignedItemKey }) {
-  const res = await fetch(`${BASE}/auth/register`, {
+// Accounts are now only ever created by an admin (self-registration is gone,
+// see CLAUDE.md "Account provisioning is admin-managed, no sign-up") --
+// every throwaway account this script needs is created via POST
+// /auth/accounts, authenticated as the seeded demo admin, instead of the old
+// public POST /auth/register. Returns the new account's login token (a
+// login call, not the create-account response, which deliberately doesn't
+// mint one -- see auth.routes.js).
+async function createAccount(adminToken, { slug, fullName, role, departmentKey, assignedItemKey }) {
+  const email = `${slug}.${RUN_ID}@smoketest.local`;
+  const res = await fetch(`${BASE}/auth/accounts`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
     body: JSON.stringify({
-      email: `${slug}.${RUN_ID}@smoketest.local`,
+      currentPassword: DEMO_PASSWORD,
+      email,
       password: PASSWORD,
       fullName,
       landlineNumber: "1234",
@@ -70,8 +91,8 @@ async function register({ slug, fullName, role, departmentKey, assignedItemKey }
     }),
   });
   const json = await res.json();
-  if (res.status !== 201) throw new Error(`register failed for ${slug}: ${JSON.stringify(json)}`);
-  return json.token;
+  if (res.status !== 201) throw new Error(`create-account failed for ${slug}: ${JSON.stringify(json)}`);
+  return login(email, PASSWORD);
 }
 
 async function login(email, password = DEMO_PASSWORD) {
@@ -85,15 +106,17 @@ async function login(email, password = DEMO_PASSWORD) {
   return json.token;
 }
 
-async function registerAllAccounts() {
+async function provisionAccounts() {
   const tokens = {};
-  tokens.fileManagement = await register({ slug: "file-management", fullName: "File Management", role: "file_management" });
+  tokens.admin = await login("admin@demo.local");
+
+  tokens.fileManagement = await createAccount(tokens.admin, { slug: "file-management", fullName: "File Management", role: "file_management" });
   tokens.sharedFileManagement = await login("file.management@demo.local");
 
   for (const deptKey of [...NON_IT_TIER1_KEYS, "wages", "finance"]) {
     tokens[`${deptKey}1`] = await login(`${deptKey}@demo.local`);
   }
-  tokens.illicit_gains2 = await register({
+  tokens.illicit_gains2 = await createAccount(tokens.admin, {
     slug: "illicit-gains-alternate",
     fullName: "Illicit Gains Alternate Reviewer",
     role: "reviewer",
@@ -142,10 +165,133 @@ async function main() {
   console.log("--- health check ---");
   console.log(await (await fetch(`${BASE}/health`)).json());
 
-  console.log("--- logging in seeded reviewers + registering two fresh smoke-test accounts ---");
-  const tokens = await registerAllAccounts();
+  console.log("--- logging in seeded reviewers + admin-provisioning two fresh smoke-test accounts ---");
+  const tokens = await provisionAccounts();
   const fileMgmtToken = tokens.fileManagement;
   console.log("done");
+
+  console.log("--- first-run setup is already done (this seeded DB has accounts) -- setup-status false, POST /auth/setup rejected ---");
+  const setupStatus = await (await fetch(`${BASE}/auth/setup-status`)).json();
+  assert(setupStatus.needsSetup === false, "expected needsSetup=false against a seeded database with existing accounts");
+  const setupAttempt = await fetch(`${BASE}/auth/setup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: `late-admin.${RUN_ID}@smoketest.local`, password: PASSWORD, fullName: "Late Admin", landlineNumber: "1234" }),
+  });
+  assert(setupAttempt.status === 409, "expected 409 -- POST /auth/setup must refuse once any account already exists");
+
+  console.log("--- self-registration is gone: POST /auth/register no longer exists (404) ---");
+  const registerGone = await fetch(`${BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: `nobody.${RUN_ID}@smoketest.local`, password: PASSWORD, fullName: "Nobody", landlineNumber: "1234", role: "file_management" }),
+  });
+  assert(registerGone.status === 404, "expected 404 -- POST /auth/register should no longer exist");
+
+  console.log("--- a non-admin cannot create accounts or list them (403) ---");
+  const nonAdminCreate = await fetch(`${BASE}/auth/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${fileMgmtToken}` },
+    body: JSON.stringify({ currentPassword: PASSWORD, email: `nobody.${RUN_ID}@smoketest.local`, password: PASSWORD, fullName: "Nobody", landlineNumber: "1234", role: "file_management" }),
+  });
+  assert(nonAdminCreate.status === 403, "expected 403 for a non-admin creating an account");
+  const nonAdminList = await fetch(`${BASE}/auth/accounts`, { headers: { Authorization: `Bearer ${fileMgmtToken}` } });
+  assert(nonAdminList.status === 403, "expected 403 for a non-admin listing accounts");
+
+  console.log("--- admin can list every account ---");
+  const accountsList = await fetch(`${BASE}/auth/accounts`, { headers: { Authorization: `Bearer ${tokens.admin}` } });
+  const accountsJson = await accountsList.json();
+  assert(accountsList.status === 200, "expected 200 listing accounts as admin");
+  assert(
+    accountsJson.some((a) => a.userID === "file.management@demo.local") && !accountsJson.some((a) => "passwordHash" in a),
+    "expected the account list to include seeded accounts and never a passwordHash"
+  );
+
+  console.log("--- admin creating an account with the wrong own password is rejected (401) ---");
+  const wrongAdminPassword = await fetch(`${BASE}/auth/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
+    body: JSON.stringify({ currentPassword: "TotallyWrong!123", email: `nobody.${RUN_ID}@smoketest.local`, password: PASSWORD, fullName: "Nobody", landlineNumber: "1234", role: "file_management" }),
+  });
+  assert(wrongAdminPassword.status === 401, "expected 401 creating an account with the wrong admin password");
+
+  console.log("--- super_admin manages admin accounts; admins can't manage each other, only sub accounts ---");
+  tokens.superAdmin = await login("superadmin@demo.local");
+
+  const adminCreatesAdmin = await fetch(`${BASE}/auth/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
+    body: JSON.stringify({ currentPassword: DEMO_PASSWORD, email: `blocked-admin.${RUN_ID}@smoketest.local`, password: PASSWORD, fullName: "Blocked Admin", landlineNumber: "1234", role: "admin" }),
+  });
+  assert(adminCreatesAdmin.status === 403, "expected 403 -- an admin can no longer create another admin account");
+
+  const superAdminCreatesReviewer = await fetch(`${BASE}/auth/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.superAdmin}` },
+    body: JSON.stringify({ currentPassword: DEMO_PASSWORD, email: `blocked-reviewer.${RUN_ID}@smoketest.local`, password: PASSWORD, fullName: "Blocked Reviewer", landlineNumber: "1234", role: "reviewer", departmentKey: "library" }),
+  });
+  assert(superAdminCreatesReviewer.status === 403, "expected 403 -- a super_admin cannot create a reviewer account directly");
+
+  const superAdminCreatesSuperAdmin = await fetch(`${BASE}/auth/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.superAdmin}` },
+    body: JSON.stringify({ currentPassword: DEMO_PASSWORD, email: `blocked-super-admin.${RUN_ID}@smoketest.local`, password: PASSWORD, fullName: "Blocked Super Admin", landlineNumber: "1234", role: "super_admin" }),
+  });
+  assert(superAdminCreatesSuperAdmin.status === 403, "expected 403 -- there is exactly one super_admin and it cannot create another");
+
+  const superAdminManagedEmail = `super-managed.${RUN_ID}@smoketest.local`;
+  const superAdminCreatesAdmin = await fetch(`${BASE}/auth/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.superAdmin}` },
+    body: JSON.stringify({ currentPassword: DEMO_PASSWORD, email: superAdminManagedEmail, password: PASSWORD, fullName: "Super Managed Admin", landlineNumber: "1234", role: "admin" }),
+  });
+  const superAdminCreatesAdminJson = await superAdminCreatesAdmin.json();
+  if (superAdminCreatesAdmin.status !== 201) throw new Error(`super_admin creating an admin account failed: ${JSON.stringify(superAdminCreatesAdminJson)}`);
+
+  const adminResetsAdmin = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
+    body: JSON.stringify({ userID: superAdminManagedEmail, password: DEMO_PASSWORD }),
+  });
+  assert(adminResetsAdmin.status === 403, "expected 403 -- an admin can't reset another admin's password");
+
+  const adminDeletesAdmin = await fetch(`${BASE}/auth/delete-account`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
+    body: JSON.stringify({ userID: superAdminManagedEmail, password: DEMO_PASSWORD }),
+  });
+  assert(adminDeletesAdmin.status === 403, "expected 403 -- an admin can't delete another admin's account");
+
+  const superAdminResetsAdmin = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.superAdmin}` },
+    body: JSON.stringify({ userID: superAdminManagedEmail, password: DEMO_PASSWORD }),
+  });
+  const superAdminResetsAdminJson = await superAdminResetsAdmin.json();
+  if (superAdminResetsAdmin.status !== 200) throw new Error(`super_admin reset-password on an admin failed: ${JSON.stringify(superAdminResetsAdminJson)}`);
+  assert(typeof superAdminResetsAdminJson.oneTimePassword === "string", "expected super_admin's reset-password to return a one-time password");
+
+  const superAdminDeletesAdmin = await fetch(`${BASE}/auth/delete-account`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.superAdmin}` },
+    body: JSON.stringify({ userID: superAdminManagedEmail, password: DEMO_PASSWORD }),
+  });
+  const superAdminDeletesAdminJson = await superAdminDeletesAdmin.json();
+  if (superAdminDeletesAdmin.status !== 200) throw new Error(`super_admin delete-account on an admin failed: ${JSON.stringify(superAdminDeletesAdminJson)}`);
+
+  console.log("--- an admin's account list is scoped to sub-accounts only; a super_admin's, to admin accounts only ---");
+  assert(
+    !accountsJson.some((a) => a.role === "admin" || a.role === "super_admin"),
+    "expected an admin's account list to never include admin/super_admin accounts"
+  );
+  const superAdminAccountsList = await fetch(`${BASE}/auth/accounts`, { headers: { Authorization: `Bearer ${tokens.superAdmin}` } });
+  const superAdminAccountsJson = await superAdminAccountsList.json();
+  assert(superAdminAccountsList.status === 200, "expected 200 listing accounts as super_admin");
+  assert(
+    superAdminAccountsJson.some((a) => a.userID === "admin@demo.local") &&
+      !superAdminAccountsJson.some((a) => a.role === "file_management" || a.role === "reviewer" || a.role === "super_admin"),
+    "expected a super_admin's account list to include admin accounts and exclude both sub-accounts and itself"
+  );
 
   console.log("--- File Management: file a new clearance request (employee data entered manually) ---");
   const reqRes = await fetch(`${BASE}/requests`, {
@@ -404,8 +550,8 @@ async function main() {
   const pdfAsPlain = await fetch(`${BASE}/requests/${requestId}/pdf`, { headers: { Authorization: `Bearer ${securityToken}` } });
   assert(pdfAsPlain.status === 403, "expected 403 fetching PDF as a plain reviewer");
 
-  console.log("--- password reset: IT issues a one-time password to a forgetful account ---");
-  await register({
+  console.log("--- password reset: an admin issues a one-time password to a forgetful account ---");
+  await createAccount(tokens.admin, {
     slug: "reset-target",
     fullName: "Reset Target Reviewer",
     role: "reviewer",
@@ -421,30 +567,45 @@ async function main() {
   });
   assert(nonItReset.status === 403, "expected 403 for a non-IT reviewer calling reset-password");
 
-  console.log("--- IT re-authenticating with the WRONG own password is rejected (401) ---");
-  const wrongOwnPasswordReset = await fetch(`${BASE}/auth/reset-password`, {
+  console.log("--- IT can no longer reset another account's password (403) ---");
+  const itReset = await fetch(`${BASE}/auth/reset-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
+    body: JSON.stringify({ userID: resetTargetEmail, password: DEMO_PASSWORD }),
+  });
+  assert(itReset.status === 403, "expected 403 -- IT's unrestricted reset-password power was removed 2026-08-13");
+
+  console.log("--- IT can no longer delete an account (403) ---");
+  const itDelete = await fetch(`${BASE}/auth/delete-account`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
+    body: JSON.stringify({ userID: resetTargetEmail, password: DEMO_PASSWORD }),
+  });
+  assert(itDelete.status === 403, "expected 403 -- IT's unrestricted delete-account power was removed 2026-08-13");
+
+  console.log("--- an admin re-authenticating with the WRONG own password is rejected (401) ---");
+  const wrongOwnPasswordReset = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
     body: JSON.stringify({ userID: resetTargetEmail, password: "TotallyWrong!123" }),
   });
-  assert(wrongOwnPasswordReset.status === 401, "expected 401 for IT re-authenticating with the wrong password");
+  assert(wrongOwnPasswordReset.status === 401, "expected 401 for an admin re-authenticating with the wrong password");
 
   console.log("--- resetting a nonexistent account is rejected (404) ---");
   const missingAccountReset = await fetch(`${BASE}/auth/reset-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
     body: JSON.stringify({ userID: `nobody.${RUN_ID}@smoketest.local`, password: DEMO_PASSWORD }),
   });
   assert(missingAccountReset.status === 404, "expected 404 resetting a nonexistent account");
 
-  // Same route/logic regardless of the target's role or department -- IT
-  // resetting another IT reviewer isn't exercised separately since it's the
-  // identical code path, and every IT item is already permanently owned by a
-  // demo account (no spare item to register a throwaway IT account against).
-  console.log("--- IT issues the reset target a one-time password ---");
+  // Same route/logic regardless of the target's department -- an admin
+  // resetting a reviewer in one department isn't exercised separately per
+  // department since it's the identical code path.
+  console.log("--- an admin issues the reset target a one-time password ---");
   const resetRes = await fetch(`${BASE}/auth/reset-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${phoneToken}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
     body: JSON.stringify({ userID: resetTargetEmail, password: DEMO_PASSWORD }),
   });
   const resetJson = await resetRes.json();
@@ -515,6 +676,38 @@ async function main() {
     body: JSON.stringify({ email: resetTargetEmail, password: newPassword }),
   });
   assert(relogin.status === 200, "expected the newly-set password to work for a fresh login");
+
+  console.log("--- an admin resets a password and then deletes the account it manages ---");
+  await createAccount(tokens.admin, {
+    slug: "admin-managed",
+    fullName: "Admin Managed Reviewer",
+    role: "reviewer",
+    departmentKey: "library",
+  });
+  const adminManagedEmail = `admin-managed.${RUN_ID}@smoketest.local`;
+  const adminReset = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
+    body: JSON.stringify({ userID: adminManagedEmail, password: DEMO_PASSWORD }),
+  });
+  const adminResetJson = await adminReset.json();
+  if (adminReset.status !== 200) throw new Error(`admin reset-password failed: ${JSON.stringify(adminResetJson)}`);
+  assert(typeof adminResetJson.oneTimePassword === "string", "expected admin reset-password to return a one-time password");
+
+  const adminDelete = await fetch(`${BASE}/auth/delete-account`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.admin}` },
+    body: JSON.stringify({ userID: adminManagedEmail, password: DEMO_PASSWORD }),
+  });
+  const adminDeleteJson = await adminDelete.json();
+  if (adminDelete.status !== 200) throw new Error(`admin delete-account failed: ${JSON.stringify(adminDeleteJson)}`);
+  assert(adminDeleteJson.userID === adminManagedEmail, "expected admin delete-account to confirm the deleted account");
+  const deletedAccountLogin = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: adminManagedEmail, password: adminResetJson.oneTimePassword }),
+  });
+  assert(deletedAccountLogin.status === 401, "expected the admin-deleted account to no longer be able to log in");
 
   console.log("\nALL CHECKS PASSED");
 }

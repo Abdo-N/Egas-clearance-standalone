@@ -213,6 +213,7 @@ export default function FileManagementDashboard() {
   const sortedRequests = sortTableRows(requests, requestSort, {
     employee: (request) => request.employeeFullName,
     jobTitle: (request) => request.employeeJobTitle,
+    department: (request) => (i18n.language === "ar" ? request.employeeDepartment_ar : request.employeeDepartment_en),
     reason: (request) => t(`employee.${reasonI18nKey(request.reason)}`),
     lastWorkingDay: (request) => new Date(request.lastWorkingDay).getTime(),
     status: (request) => {
@@ -394,6 +395,7 @@ export default function FileManagementDashboard() {
                     <tr>
                       <SortableTableHeader columnKey="employee" label={t("reviewer.employee")} sort={requestSort} onSort={handleRequestSort} />
                       <SortableTableHeader columnKey="jobTitle" label={t("fileManagement.jobTitleLabel")} sort={requestSort} onSort={handleRequestSort} />
+                      <SortableTableHeader columnKey="department" label={t("reviewer.requestInfoDepartment")} sort={requestSort} onSort={handleRequestSort} />
                       <SortableTableHeader columnKey="reason" label={t("employee.reasonLabel")} sort={requestSort} onSort={handleRequestSort} />
                       <SortableTableHeader columnKey="lastWorkingDay" label={t("employee.lastWorkingDayLabel")} sort={requestSort} onSort={handleRequestSort} />
                       <SortableTableHeader columnKey="status" label={t("employee.statusLabel")} sort={requestSort} onSort={handleRequestSort} />
@@ -421,6 +423,7 @@ export default function FileManagementDashboard() {
                             {r.employeeFullName} <small>#{r.employeeNumber}</small>
                           </td>
                           <td>{r.employeeJobTitle || "—"}</td>
+                          <td>{(i18n.language === "ar" ? r.employeeDepartment_ar : r.employeeDepartment_en) || "—"}</td>
                           <td>{t(`employee.${reasonI18nKey(r.reason)}`)}</td>
                           <td>{formatDate(r.lastWorkingDay, i18n.language)}</td>
                           <td>
@@ -452,6 +455,10 @@ export default function FileManagementDashboard() {
                 <div className="detail-row">
                   <span>{t("fileManagement.jobTitleLabel")}</span>
                   <strong>{selected.employeeJobTitle || "—"}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>{t("reviewer.requestInfoDepartment")}</span>
+                  <strong>{(i18n.language === "ar" ? selected.employeeDepartment_ar : selected.employeeDepartment_en) || "—"}</strong>
                 </div>
                 <div className="detail-row">
                   <span>{t("employee.reasonLabel")}</span>

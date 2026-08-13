@@ -34,6 +34,7 @@ function RequestTable({ requests, getDept, t, lang, onOpen, showArchivedMarker }
   const sortedRequests = sortTableRows(requests, sort, {
     employee: (request) => request.employeeFullName,
     jobTitle: (request) => request.employeeJobTitle,
+    department: (request) => (lang === "ar" ? request.employeeDepartment_ar : request.employeeDepartment_en),
     reason: (request) => t(`employee.${reasonI18nKey(request.reason)}`),
     lastWorkingDay: (request) => new Date(request.lastWorkingDay).getTime(),
     status: (request) => {
@@ -53,6 +54,7 @@ function RequestTable({ requests, getDept, t, lang, onOpen, showArchivedMarker }
           <tr>
             <SortableTableHeader columnKey="employee" label={t("reviewer.employee")} sort={sort} onSort={handleSort} />
             <SortableTableHeader columnKey="jobTitle" label={t("fileManagement.jobTitleLabel")} sort={sort} onSort={handleSort} />
+            <SortableTableHeader columnKey="department" label={t("reviewer.requestInfoDepartment")} sort={sort} onSort={handleSort} />
             <SortableTableHeader columnKey="reason" label={t("employee.reasonLabel")} sort={sort} onSort={handleSort} />
             <SortableTableHeader columnKey="lastWorkingDay" label={t("employee.lastWorkingDayLabel")} sort={sort} onSort={handleSort} />
             <SortableTableHeader columnKey="status" label={t("employee.statusLabel")} sort={sort} onSort={handleSort} />
@@ -78,6 +80,7 @@ function RequestTable({ requests, getDept, t, lang, onOpen, showArchivedMarker }
               >
                 <td>{request.employeeFullName} <small>#{request.employeeNumber}</small></td>
                 <td>{request.employeeJobTitle || "—"}</td>
+                <td>{(lang === "ar" ? request.employeeDepartment_ar : request.employeeDepartment_en) || "—"}</td>
                 <td>{t(`employee.${reasonI18nKey(request.reason)}`)}</td>
                 <td>{formatDate(request.lastWorkingDay, lang)}</td>
                 <td>
@@ -125,226 +128,6 @@ function RevokeAccessForm({ onSubmit, busy, t }) {
         {busy ? t("reviewer.archiving") : t("reviewer.revokeAccessButton")}
       </button>
     </form>
-  );
-}
-
-// IT-only: issue ANY account (another IT reviewer, a plain department
-// reviewer, or File Management) a fresh one-time password when they've
-// forgotten theirs -- there's no email infrastructure in this app to send a
-// reset link through instead (see CLAUDE.md), so IT hands this off directly.
-// Account-level, not tied to any clearance request, so it lives on the
-// request list screen rather than inside a request's detail panel.
-function ResetPasswordPanel({ t }) {
-  const [open, setOpen] = useState(false);
-  const [targetEmail, setTargetEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState(null);
-  const [copied, setCopied] = useState(false);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError("");
-    try {
-      const { data } = await client.post("/auth/reset-password", { userID: targetEmail, password });
-      setResult(data);
-      setTargetEmail("");
-      setPassword("");
-    } catch (err) {
-      setError(err.response?.data?.error || t("reviewer.resetPasswordError"));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function handleCopy() {
-    navigator.clipboard?.writeText(result.oneTimePassword);
-    setCopied(true);
-  }
-
-  function handleDismiss() {
-    setResult(null);
-    setCopied(false);
-    setOpen(false);
-  }
-
-  if (result) {
-    return (
-      <section className="detail-panel" style={{ marginBottom: 16 }}>
-        <h3>{t("reviewer.resetPasswordSuccessTitle")}</h3>
-        <p>{t("reviewer.resetPasswordSuccessHint", { name: result.fullName })}</p>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "10px 14px",
-            margin: "10px 0",
-            borderRadius: 8,
-            background: "var(--card, #f4f5f6)",
-            border: "1px dashed var(--line, #d1d5db)"
-          }}
-        >
-          <code style={{ fontSize: 16, letterSpacing: 1 }}>{result.oneTimePassword}</code>
-          <button type="button" className="secondary-button" onClick={handleCopy}>
-            {copied ? t("reviewer.resetPasswordCopied") : t("reviewer.resetPasswordCopy")}
-          </button>
-        </div>
-        <button type="button" className="secondary-button" onClick={handleDismiss}>
-          {t("reviewer.resetPasswordDismiss")}
-        </button>
-      </section>
-    );
-  }
-
-  if (!open) {
-    return (
-      <button type="button" className="secondary-button" style={{ marginBottom: 16 }} onClick={() => setOpen(true)}>
-        {t("reviewer.resetPasswordTitle")}
-      </button>
-    );
-  }
-
-  return (
-    <section className="detail-panel" style={{ marginBottom: 16 }}>
-      <h3>{t("reviewer.resetPasswordTitle")}</h3>
-      <p>{t("reviewer.resetPasswordHint")}</p>
-      <form className="signature-form" onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label>{t("reviewer.resetPasswordEmailLabel")}</label>
-          <input type="email" value={targetEmail} onChange={(e) => setTargetEmail(e.target.value)} required />
-        </div>
-        <div className="form-group">
-          <label>{t("signature.passwordLabel")}</label>
-          <PasswordInput
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button type="submit" className="secondary-button" disabled={submitting || !targetEmail || !password}>
-            {submitting ? t("reviewer.resetPasswordBusy") : t("reviewer.resetPasswordButton")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              setOpen(false);
-              setError("");
-            }}
-          >
-            {t("reviewer.cancel")}
-          </button>
-        </div>
-        {error && <small className="login-error">{error}</small>}
-      </form>
-    </section>
-  );
-}
-
-// IT-only: permanently delete ANY account -- another IT reviewer (including
-// the acting IT reviewer's own), a plain department reviewer, or File
-// Management. No separate object to select first (unlike ReauthConfirmButton
-// elsewhere in the app, which confirms an action on something already on
-// screen), so this needs its own target-email field, same shape as
-// ResetPasswordPanel above. Deleting your own account logs you straight out
-// via onSelfDelete instead of showing a dismissible success panel, since
-// there'd be nothing left to dismiss back to.
-function DeleteAccountPanel({ t, currentUserID, onSelfDelete }) {
-  const [open, setOpen] = useState(false);
-  const [targetEmail, setTargetEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState(null);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError("");
-    try {
-      const { data } = await client.post("/auth/delete-account", { userID: targetEmail, password });
-      if (data.userID.toLowerCase() === currentUserID.toLowerCase()) {
-        onSelfDelete();
-        return;
-      }
-      setResult(data);
-      setTargetEmail("");
-      setPassword("");
-    } catch (err) {
-      setError(err.response?.data?.error || t("reviewer.deleteAccountError"));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function handleDismiss() {
-    setResult(null);
-    setOpen(false);
-  }
-
-  if (result) {
-    return (
-      <section className="detail-panel" style={{ marginBottom: 16 }}>
-        <h3>{t("reviewer.deleteAccountSuccessTitle")}</h3>
-        <p>{t("reviewer.deleteAccountSuccessHint", { name: result.fullName })}</p>
-        <button type="button" className="secondary-button" onClick={handleDismiss}>
-          {t("reviewer.resetPasswordDismiss")}
-        </button>
-      </section>
-    );
-  }
-
-  if (!open) {
-    return (
-      <button type="button" className="secondary-button" style={{ marginBottom: 16 }} onClick={() => setOpen(true)}>
-        {t("reviewer.deleteAccountTitle")}
-      </button>
-    );
-  }
-
-  return (
-    <section className="detail-panel" style={{ marginBottom: 16 }}>
-      <h3>{t("reviewer.deleteAccountTitle")}</h3>
-      <div className="danger-zone">
-        <p>{t("reviewer.deleteAccountHint")}</p>
-        <form className="signature-form" onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>{t("reviewer.resetPasswordEmailLabel")}</label>
-            <input type="email" value={targetEmail} onChange={(e) => setTargetEmail(e.target.value)} required />
-          </div>
-          <div className="form-group">
-            <label>{t("signature.passwordLabel")}</label>
-            <PasswordInput
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="submit" className="secondary-button" disabled={submitting || !targetEmail || !password}>
-              {submitting ? t("reviewer.deleteAccountBusy") : t("reviewer.deleteAccountButton")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                setOpen(false);
-                setError("");
-              }}
-            >
-              {t("reviewer.cancel")}
-            </button>
-          </div>
-          {error && <small className="login-error">{error}</small>}
-        </form>
-      </div>
-    </section>
   );
 }
 
@@ -485,9 +268,6 @@ export default function ReviewerDashboard() {
 
         {!selected && (
           <>
-            {isIT && <ResetPasswordPanel t={t} />}
-            {isIT && <DeleteAccountPanel t={t} currentUserID={user.userID} onSelfDelete={logout} />}
-
             {loading && <p className="dashboard-status-message">{t("common.loading")}</p>}
 
             {!loading && (

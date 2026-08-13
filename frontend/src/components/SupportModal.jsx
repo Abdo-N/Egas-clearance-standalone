@@ -1,24 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import client from "../api/client";
 
 const SupportModal = () => {
   const { t, i18n } = useTranslation();
   const isAr = i18n.language === "ar";
   const [isOpen, setIsOpen] = useState(false);
-  const [phone, setPhone] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [adminContacts, setAdminContacts] = useState([]);
+  const [itContacts, setItContacts] = useState([]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (phone) {
-      setSubmitted(true);
-      setTimeout(() => {
-        setSubmitted(false);
-        setIsOpen(false);
-        setPhone("");
-      }, 3000);
-    }
-  };
+  // Public/no-auth, same as the login page's own "Forgot your password?"
+  // disclosure -- someone hitting "Need help?" has no token either. Admins
+  // and super_admins are listed alongside IT since there's no more
+  // self-service sign-up: a brand-new person needs to know an admin (or,
+  // failing that, a super_admin) exists to ask for an account, not just IT
+  // for a password reset.
+  useEffect(() => {
+    client.get("/auth/admin-contacts").then(({ data }) => setAdminContacts(data)).catch(() => {});
+    client.get("/auth/it-contacts").then(({ data }) => setItContacts(data)).catch(() => {});
+  }, []);
 
   return (
     <div className="support-widget" style={{ position: "fixed", bottom: "20px", left: "20px", zIndex: 1000 }}>
@@ -77,55 +77,43 @@ const SupportModal = () => {
 
           <p style={{ fontSize: "14px", color: "#555", marginBottom: "15px" }}>{t("support.intro")}</p>
 
-          <div className="support-hotline" style={{ backgroundColor: "#f0f4f8", padding: "10px", borderRadius: "8px", marginBottom: "15px" }}>
-            <span style={{ fontSize: "13px", color: "#666" }}>{t("support.hotlineLabel")}</span>
-            <div style={{ fontSize: "20px", fontWeight: "bold", color: "#0056b3", direction: "ltr", textAlign: "center", marginTop: "5px" }}>
-              <a href="tel:16xxx" style={{ textDecoration: "none", color: "inherit" }}>16XXX / 02-XXXXXXX</a>
-            </div>
-          </div>
-
-          {!submitted ? (
-            <form className="support-form" onSubmit={handleSubmit}>
-              <label style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>
-                {t("support.callbackLabel")}
-              </label>
-              <input
-                type="tel"
-                placeholder={t("support.callbackPlaceholder")}
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-                style={{
-                  width: "100%",
-                  padding: "10px",
-                  borderRadius: "6px",
-                  border: "1px solid #ccc",
-                  marginBottom: "10px",
-                  fontSize: "14px",
-                  boxSizing: "border-box",
-                }}
-              />
-              <button
-                type="submit"
-                className="support-submit"
-                style={{
-                  width: "100%",
-                  backgroundColor: "#28a745",
-                  color: "#fff",
-                  border: "none",
-                  padding: "10px",
-                  borderRadius: "6px",
-                  fontWeight: "bold",
-                  fontSize: "14px",
-                  cursor: "pointer",
-                }}
-              >
-                {t("support.callbackButton")}
-              </button>
-            </form>
-          ) : (
-            <div style={{ backgroundColor: "#d4edda", color: "#155724", padding: "10px", borderRadius: "6px", textAlign: "center", fontSize: "14px" }}>
-              {t("support.callbackSuccess")}
+          {(adminContacts.length > 0 || itContacts.length > 0) && (
+            <div className="support-contacts" style={{ marginBottom: "15px" }}>
+              <span style={{ fontSize: "13px", color: "#666", display: "block", marginBottom: "6px" }}>
+                {t("support.contactsLabel")}
+              </span>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "180px", overflowY: "auto" }}>
+                {adminContacts.map((contact) => (
+                  <div key={contact.userID} style={{ fontSize: "13px", backgroundColor: "#f0f4f8", borderRadius: "6px", padding: "8px 10px" }}>
+                    <div style={{ fontWeight: "bold", marginBottom: "2px" }}>
+                      {isAr ? contact.fullName_ar || contact.fullName : contact.fullName}
+                      {" · "}
+                      {contact.role === "super_admin" ? t("support.roleSuperAdmin") : t("support.roleAdmin")}
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                      <a href={`mailto:${contact.userID}`} style={{ color: "#0056b3" }}>{contact.userID}</a>
+                      {contact.landlineNumber && (
+                        <a href={`tel:${contact.landlineNumber}`} style={{ color: "#0056b3" }}>{contact.landlineNumber}</a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {itContacts.map((contact) => (
+                  <div key={contact.userID} style={{ fontSize: "13px", backgroundColor: "#f0f4f8", borderRadius: "6px", padding: "8px 10px" }}>
+                    <div style={{ fontWeight: "bold", marginBottom: "2px" }}>
+                      {isAr ? contact.fullName_ar || contact.fullName : contact.fullName}
+                      {" · "}
+                      {t("support.roleIt")}
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                      <a href={`mailto:${contact.userID}`} style={{ color: "#0056b3" }}>{contact.userID}</a>
+                      {contact.landlineNumber && (
+                        <a href={`tel:${contact.landlineNumber}`} style={{ color: "#0056b3" }}>{contact.landlineNumber}</a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

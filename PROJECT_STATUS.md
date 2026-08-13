@@ -1,11 +1,319 @@
 # Project Status
 
-Last updated: 2026-08-12 (migrated the entire data layer from
-MongoDB/Mongoose to PostgreSQL/Sequelize, on a new `postgres-migration`
-branch — by Nader + Claude). Update this file whenever a task moves — don't
-let it go stale.
+Last updated: 2026-08-13 (removed IT's unrestricted reset-password/
+delete-account power, on the `postgres-migration` branch — by Nader +
+Claude). Update this file whenever a task moves — don't let it go stale.
 
 ## Done
+
+- [x] **IT reviewers can no longer reset another account's password or
+      delete an account — that unrestricted "any account, no exceptions"
+      power is gone (2026-08-13).** Until now, any of IT's 5 reviewers could
+      reset or delete literally any account (including other IT reviewers,
+      admins, and the super_admin) via `POST /auth/reset-password` /
+      `POST /auth/delete-account`, predating admin/super_admin accounts and
+      serving as the escape hatch if a whole account tier got locked out.
+      Nader's call: take that away — IT is now just an ordinary `reviewer`
+      account for account-management purposes, managed by an admin like any
+      other reviewer. Backend: both routes dropped their `isIT` bypass
+      entirely and now check only `MANAGEABLE_ROLES_BY_ACTOR`, and their
+      `requireRole` dropped `"reviewer"` (admin/super_admin only). Frontend:
+      removed `ReviewerDashboard.jsx`'s IT-only "Reset a colleague's
+      password" / "Delete an account" panels (`ResetPasswordPanel`,
+      `DeleteAccountPanel`) along with their now-unused `reviewer.
+      resetPassword*`/`reviewer.deleteAccount*` i18n keys; `Login.jsx`'s
+      "Forgot your password?" disclosure now pulls `GET /auth/admin-contacts`
+      instead of `GET /auth/it-contacts`, since IT can't actually help with
+      that anymore. `GET /auth/it-contacts` itself is untouched — still
+      shown in `SupportModal.jsx`'s "Need help?" widget, since IT remains a
+      legitimate contact for other reasons. **Known tradeoff, not a bug:**
+      this reopens a lockout gap — nothing can reset or delete the sole
+      `super_admin` account if it's ever locked out, since `super_admin`
+      never appears in `MANAGEABLE_ROLES_BY_ACTOR` and can't self-target
+      either. CLAUDE.md updated (the "Forgotten passwords" section and the
+      `super_admin` paragraph) to match. `smoke-test.js` updated: the old
+      IT-issues-a-reset flow now runs through an admin token instead, plus
+      new assertions that IT gets 403 on both routes. Verified against a
+      freshly reseeded local Postgres: full `smoke-test.js` green.
+
+- [x] **`super_admin` can no longer create another `super_admin` — there is
+      exactly ONE, ever (2026-08-13, follow-up to the entry directly
+      below).** The first pass at the `super_admin` role allowed a
+      super_admin to create additional super_admin accounts "for
+      redundancy"; Nader's call: don't allow that, one root account is the
+      whole point. Fix is entirely in `MANAGEABLE_ROLES_BY_ACTOR`
+      (`auth.routes.js`): `super_admin: ["admin"]` now, not `["admin",
+      "super_admin"]` — since `"super_admin"` never appears in any actor's
+      manageable-roles list, `POST /accounts` structurally 403s on `role:
+      "super_admin"` no matter who calls it, and the ONLY way a super_admin
+      account ever comes into existence is `POST /auth/setup` on a
+      genuinely empty database. Same one-line change also means a
+      super_admin can no longer reset/delete another super_admin's account
+      (there isn't one) or, notably, its OWN via those routes either — same
+      "can't self-target" behavior an admin already had, IT remains the one
+      escape hatch if the sole super_admin gets locked out. Frontend:
+      `AdminDashboard.jsx`'s `manageableRoles` for a super_admin is now just
+      `["admin"]`; the create-account role dropdown is hidden entirely when
+      there's only one possible role to pick; also updated CLAUDE.md,
+      README.md, and `smoke-test.js` (new assertion: a super_admin creating
+      `role: "super_admin"` 403s) to match. Verified against a freshly
+      reseeded local Postgres: full `smoke-test.js` green, and a direct curl
+      as the demo super_admin confirms `POST /auth/accounts` with `role:
+      "super_admin"` 403s with `"'role' must be one of: admin"`. `npm run
+      build` (frontend) clean.
+
+- [x] **Added a `super_admin` role that manages `admin` accounts, the same
+      way `admin` manages File Management/reviewer accounts (2026-08-13).**
+      Previously any `admin` could create/reset/delete any other admin
+      account, including itself out — there was no layer above `admin` to
+      manage the account managers. Now there is: `User.role` gained
+      `"super_admin"` (`backend/src/models/index.js`), and
+      `auth.routes.js`'s account-management routes (`GET`/`POST /accounts`,
+      `POST /reset-password`, `POST /delete-account`) are scoped per actor
+      via a new `MANAGEABLE_ROLES_BY_ACTOR` map: `admin` → `["file_management",
+      "reviewer"]`, `super_admin` → `["admin", "super_admin"]`. An admin can
+      no longer touch another admin's account at all; a super_admin can't
+      touch a File Management/reviewer account directly either — each tier
+      is strictly scoped to what it manages. IT's separate, pre-existing
+      "any account, no restrictions" reset-password/delete-account power is
+      unchanged and stays the one deliberate escape hatch (e.g. a locked-out
+      lone super_admin). `GET /auth/accounts` is now filtered server-side to
+      each actor's manageable-roles set, not just hidden in the UI.
+      First-run setup (`POST /auth/setup`, the flow a genuinely empty
+      database triggers) now bootstraps a `super_admin` instead of a plain
+      `admin` — it's the root of the hierarchy: `/setup` → super_admin →
+      creates the first `admin` from `/super-admin` → that admin creates
+      every File Management/reviewer account from `/admin`. Frontend reuses
+      the existing `AdminDashboard.jsx` component for both `/admin` and the
+      new `/super-admin` route (`RequireRole`-gated same as every other
+      dashboard) rather than forking it — the only difference between the
+      two is which roles the create-account dropdown offers, driven by
+      `user.role` (`manageableRoles` in the component, mirroring the
+      backend's map). `dashboardPathFor()` gained the `super_admin` → 
+      `/super-admin` mapping. `GET /departments/coverage` gained
+      `missingAdmin` (alongside the existing `missingFileManagement`) since
+      a deployment with a super_admin but zero admins is just as real a
+      staffing dead end; `SetupCoverageWarning.jsx` surfaces it the same way.
+      Seed data: `npm run seed:dev` now also creates a demo super_admin
+      (`superadmin@demo.local`, same shared demo password), added to the
+      login page's dev-only demo-accounts list and `demoAccounts.js`.
+      New i18n keys throughout (`admin.roleSuperAdmin`, `admin.titleAdmin`/
+      `titleSuperAdmin`, `firstRunSetup.*` reworded for "super admin",
+      `login.demoAccounts.superAdmin`) in both `en.json`/`ar.json` — Arabic
+      display label "المسؤول الرئيسي".
+      Verified thoroughly: extended `backend/scripts/smoke-test.js` with
+      coverage for the new boundaries (an admin creating/resetting/deleting
+      another admin now 403s; a super_admin creating a reviewer directly
+      403s; a super_admin CAN create/reset/delete an admin; each role's
+      account list excludes the other tier) — full suite green against a
+      freshly reseeded local Postgres. Separately spun up a genuinely empty
+      database (`seedDepartments.js` only) and drove the real first-run
+      flow end to end via `curl`: `GET /auth/setup-status` → `needsSetup:
+      true`, `POST /auth/setup` → a working token with `role: "super_admin"`,
+      `GET /departments/coverage` → `missingAdmin: true`, then used that
+      token to create an admin via `POST /auth/accounts` and confirmed
+      `missingAdmin` flipped to `false`. `npm run build` (frontend) clean.
+
+- [x] **The login page's "Need help?" widget (`SupportModal.jsx`) now also
+      lists `super_admin` contacts, not just admin and IT (2026-08-13).**
+      `GET /auth/admin-contacts` now filters on `role IN ("admin",
+      "super_admin")` instead of just `"admin"` (added `role` to the
+      returned fields so the frontend can tell which label to show per
+      contact); `SupportModal.jsx` picks `support.roleAdmin` or
+      `support.roleSuperAdmin` per contact accordingly. New
+      `support.roleSuperAdmin`/updated `support.contactsLabel` i18n keys in
+      both `en.json`/`ar.json`. Follows the same "public by necessity"
+      reasoning as the rest of this widget: with `super_admin` accounts able
+      to be locked out just like any other tier, and IT's escape hatch being
+      the only other way to reach one, a random person needing help should
+      be able to find a super_admin too, not just an admin.
+      Same day: also stripped the placeholder support-hotline
+      (`16XXX / 02-XXXXXXX`, never a real number) and the "request a
+      callback" phone-number form out of `SupportModal.jsx` -- the widget is
+      now nothing but the IT/admin/super_admin contact list, no other
+      filler content. Removed the now-unused `support.hotlineLabel`/
+      `callbackLabel`/`callbackPlaceholder`/`callbackButton`/
+      `callbackSuccess` i18n keys and their `.support-hotline`/
+      `.support-form input`/`.support-submit` CSS rules
+      (`frontend/src/styles.css`) along with the dead `phone`/`submitted`
+      component state.
+
+- [x] **Quality/sanity check on the admin-role work below, one real bug found
+      and fixed (2026-08-13).** `Login.jsx`'s `checkingSetup` state was
+      declared and set (`useState(true)`, flipped to `false` once
+      `GET /auth/setup-status` resolves) but never actually read anywhere in
+      the component -- there was no `if (checkingSetup) return null` before
+      the JSX, so the login form rendered immediately on every mount
+      regardless, including on a genuinely empty database, and only
+      redirected to `/setup` a moment later once the request resolved. This
+      contradicted both the comment directly above the effect and the "Done"
+      entry below claiming "no flash of a login form" -- that Playwright
+      verification pass evidently ran before this regressed, or the guard
+      was written as a comment/intent and never actually wired up. Fixed
+      with the one-line guard the comment already described. Also fixed two
+      pieces of doc drift the same pass turned up: CLAUDE.md referenced a
+      `TASKS.md` file (its intro paragraph and the repo-layout listing) that
+      was actually deleted back on 2026-08-06 (`a91433d`, unrelated to this
+      branch) -- both references removed. README.md, which this branch's
+      commits never touched, still described the removed self-registration
+      flow throughout (Features, Roles and visibility, the account-access
+      workflow step, the API table's `POST /auth/register`, Known
+      limitations, the demo-accounts count) -- brought in line with the
+      actual admin-managed/first-run-setup flow described in CLAUDE.md.
+
+- [x] **Replaced the default-credential bootstrap admin with an in-browser
+      first-run setup flow (2026-08-13, Nader).** The very first thing a
+      brand-new deployment (zero accounts in the database) shows is now a
+      "create the admin account" screen, not a login form or a fixed
+      default password documented somewhere to go look up. New public (no
+      auth) routes in `auth.routes.js`: `GET /auth/setup-status` returns
+      `{ needsSetup: User.count() === 0 }`; `POST /auth/setup` creates the
+      first admin account directly from whatever name/email/password/
+      landline the deploying person types in, re-checking the same count at
+      request time and 409ing permanently the instant any account exists --
+      this is the one route in the whole app an unauthenticated request can
+      create an account through, so that guard is load-bearing, not a UX
+      nicety. `Login.jsx` checks `setup-status` on mount (rendering nothing
+      until it resolves, so there's no flash of a login form right before
+      bouncing away from it) and redirects to the new
+      `frontend/src/pages/FirstRunSetup.jsx` (routed at `/setup`) when setup
+      is needed; that page itself re-checks the same status and bounces to
+      `/login` if someone navigates there directly after setup is already
+      done. On success it logs straight into the new account (same
+      token/user response shape as login, via a new `completeSetup()` in
+      `AuthContext.jsx`) and lands on `/admin` -- "everything else flows
+      like normal after that," per the ask. `npm run seed:final` is back to
+      departments-only (no bootstrap admin, no `ADMIN_EMAIL`/
+      `ADMIN_PASSWORD` env vars); the real deploy flow is now: run
+      `seed:final`, visit the site, fill in the setup form once.
+      `backend/scripts/smoke-test.js` (always run against an already-seeded
+      DB) asserts the already-done rejection path (`setup-status` false,
+      `POST /auth/setup` 409); the actual first-run success path was
+      verified separately end to end -- a from-scratch `seed:final` against
+      a genuinely empty database, then `curl`ing `/auth/setup-status`
+      (`needsSetup: true`) and `POST /auth/setup` (created the account,
+      returned a working token) confirmed the whole flow live.
+
+- [x] **Follow-up polish on the admin role work (2026-08-13):**
+      - **Employee department now shown in the request list AND detail view**,
+        not just tucked away — `FileManagementDashboard.jsx`'s list table and
+        detail panel, and `ReviewerDashboard.jsx`'s list table (its detail
+        view already had it), all gained an `employeeDepartment_ar/en`
+        column/row (sortable in the list, reusing the existing
+        `reviewer.requestInfoDepartment` label). No backend change needed --
+        `employeeDepartment_ar/en` was already passed through untouched by
+        every response-shaping function (`redactToOwnDepartment()`,
+        `withOwnDepartmentAnnotated()`, `summarizeForFileManagement()`),
+        just never rendered in these two spots.
+      - **Fixed a real, pre-existing eye-icon bug in `PasswordInput.jsx`**,
+        made much more visible by `AdminDashboard.jsx` leaning on it heavily
+        (2 re-auth password fields per account row). Two distinct root
+        causes, found in two passes (the first fix only masked the second):
+        (1) `.password-input-wrapper input` never had `width: 100%` in
+        `styles.css`, so any usage NOT wrapped in a `.form-group` (which
+        happens to set `width: 100%` itself) rendered the `<input>` at the
+        browser's bare default width while the absolutely-positioned toggle
+        button stayed pinned to the *wrapper's* edge -- a visible gap
+        between the input's real right border and the icon, floating in
+        empty space. (2) Once (1) was fixed, a second bug surfaced: long
+        placeholders (e.g. `signature.passwordLabel`, "Your password
+        (re-authentication)") now rendered UNDER the icon instead of being
+        clipped before it, in `ReauthConfirmButton.jsx` contexts
+        specifically. Cause: `.inline-reauth-form input` (same (0,1,1)
+        specificity as `.password-input-wrapper input`, but declared LATER
+        in `styles.css`) was winning the cascade tie and clobbering the
+        `padding-inline-end: 42px` reserved for the icon back down to
+        `0.75rem` -- any future `X input` rule anywhere in the stylesheet
+        could reintroduce the identical bug depending purely on where it
+        happened to land in the file. Real fix: `PasswordInput.jsx`'s
+        `<input>` now carries its own dedicated `password-input-control`
+        class, and the CSS rule targets `.password-input-wrapper
+        .password-input-control` (0,2,1) -- structurally guaranteed to beat
+        any single-class container rule regardless of source order, so this
+        can't regress a third time no matter what a future container adds.
+      - **The setup-incomplete warning (`SetupCoverageWarning.jsx`) now also
+        flags a missing File Management account**, not just missing
+        department reviewers/IT items -- `GET /departments/coverage` gained
+        `missingFileManagement` (`User.count({ where: { role:
+        "file_management" } }) === 0`), folded into `isFullySetUp`. Without
+        this, a deployment with zero File Management accounts (nobody who
+        can even file a request) read as fully set up as long as every
+        department had a reviewer.
+      - **The login page's "Need help?" widget (`SupportModal.jsx`) now
+        lists IT and admin contacts directly**, not just the placeholder
+        support hotline/callback form -- reuses `GET /auth/it-contacts` and
+        a new, identically-shaped `GET /auth/admin-contacts` (public/no-auth,
+        same "public by necessity" reasoning: no more self-registration
+        means a brand-new person needs to know who to ask for an account in
+        the first place, not just who resets a forgotten password).
+      Verified live: reseeded coverage gap confirmed genuine (the shared dev
+      DB currently has zero `file_management` accounts from earlier manual
+      testing) and the banner correctly shows it; Playwright screenshots of
+      the setup warning, the Need Help modal (admin + IT contact cards), and
+      a measured DOM check confirming the toggle button now sits fully
+      inside the input's rendered box (`buttonWithinInputHorizontally:
+      true`). `npm run build` clean.
+
+- [x] **Added an `admin` role that manages accounts; removed self-registration
+      entirely (2026-08-13).** `POST /auth/register` (open sign-up, no
+      approval step) is gone, along with `Register.jsx`/`/register` and
+      `AuthContext.jsx`'s `register()`. In its place: a new `admin` role
+      (`backend/src/models/index.js`'s `User.role` enum gained `"admin"`)
+      whose only job is account management —
+      `frontend/src/pages/AdminDashboard.jsx` (routed at `/admin`, gated by
+      the same `RequireRole` pattern every other dashboard uses) lists every
+      account (`GET /auth/accounts`), creates new ones of any of the three
+      roles (`POST /auth/accounts`, re-authenticating with the admin's own
+      password, same validation the old register route did for
+      department/item choices and the one IT-item-uniqueness integrity
+      rule), and can reset a password or permanently delete any account
+      right from the account row (reusing the existing
+      `POST /auth/reset-password` / `POST /auth/delete-account` routes,
+      which now accept `role: "admin"` in addition to the IT reviewers they
+      already worked for — **IT's own ability to do both is unchanged**,
+      admin is a second, independent way to reach the same routes, not a
+      replacement). See CLAUDE.md's "admin-managed accounts, no AD" section
+      for the full design.
+      Bootstrapping: originally `npm run seed:final` auto-created a fixed
+      default-credential bootstrap admin -- **superseded the same day by an
+      in-browser first-run setup flow instead, see the entry below**, so
+      there's no well-known default password sitting in the codebase. `npm
+      run seed:dev` still seeds an equivalent demo admin,
+      `admin@demo.local` (`backend/src/seed/demo-users.data.js`, also added
+      to the dev-only demo-accounts list on the login page).
+      Also fixed a latent redirect bug this surfaced: `Login.jsx` and
+      `SetNewPassword.jsx` both had `user.role === "file_management" ?
+      "/file-management" : "/reviewer"` hardcoded inline, which would have
+      sent a freshly-logged-in or freshly-password-reset admin to
+      `/reviewer` (then bounced back to `/login` by `RequireRole`) instead
+      of `/admin` — extracted a shared `dashboardPathFor()` helper
+      (`frontend/src/utils/dashboardPath.js`) used by `App.jsx`, `Login.jsx`,
+      and `SetNewPassword.jsx` so the three can't drift out of sync again.
+      The `register`/password-rule i18n keys (`passwordHint`,
+      `passwordMismatch`, `passwordTooWeak`, `confirmPassword`) that
+      `SetNewPassword.jsx` was borrowing from the now-deleted `register`
+      namespace moved to a proper shared `passwordRules` namespace instead,
+      used by both `SetNewPassword.jsx` and `AdminDashboard.jsx`'s
+      create-account form.
+      `backend/scripts/smoke-test.js` no longer has a public register
+      helper to lean on — every throwaway account it needs is now created
+      via `POST /auth/accounts`, authenticated as the seeded demo admin;
+      also added coverage for the admin routes themselves (register truly
+      gone → 404, non-admin → 403 on both create and list, wrong-own-password
+      → 401, and an admin successfully doing what IT does — reset a password
+      and delete an account, mirroring the existing IT-only checks).
+      Verified thoroughly: full `smoke-test.js` run green end to end against
+      a freshly reseeded local Postgres; a from-scratch `seed:final` run
+      against an empty database confirmed the bootstrap admin is created,
+      forced through `/set-new-password` on first login, and can then create
+      a real account; and a full browser-driven pass (Playwright, temporary
+      `--no-save` install, removed nothing since it never touched
+      `package.json`) through the actual running app — logged in as the demo
+      admin, landed on `/admin`, created a test account through the UI form,
+      confirmed it appeared in the table, reset its password (one-time
+      password displayed correctly), deleted it (disappeared from the
+      table), and confirmed the login page no longer shows any sign-up
+      link/wording — zero console errors throughout. `npm run build` clean.
 
 - [x] **Migrated the data layer from MongoDB/Mongoose to PostgreSQL/Sequelize
       (2026-08-12), on a new `postgres-migration` branch (not yet merged to

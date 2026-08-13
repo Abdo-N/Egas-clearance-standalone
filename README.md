@@ -13,8 +13,11 @@ with role-based dashboards and server-enforced visibility rules.
 
 - Arabic-first interface with full RTL support and an English language toggle.
 - Responsive light and dark themes.
-- Email/password login and self-registration for File Management and reviewers.
-- Role-protected File Management and reviewer dashboards.
+- Email/password login with admin-managed account provisioning (no
+  self-registration).
+- Role-protected File Management, reviewer, admin, and super admin dashboards.
+- In-browser first-run setup flow that creates the very first (super admin)
+  account on a brand-new deployment.
 - Config-driven department order, tiers, and signature modes.
 - Parallel tier-1 review followed by gated Wages and Finance review.
 - Password re-authentication before every signature, reopen, approval, or
@@ -37,18 +40,32 @@ with role-based dashboards and server-enforced visibility rules.
 | Department reviewer | Signs or reopens their own department after re-entering their password | Only their own department slice of each unlocked request |
 | IT reviewer | Owns one of IT's five checklist items and can perform the final access-revocation action | IT checklist details only; receives safe readiness flags without seeing other departments |
 | Wages or Finance reviewer | Signs their department and provides oversight | Full 13-department status, signer, timestamp, and evidence details for every request |
+| Admin | Creates File Management/reviewer accounts, and can reset a password or permanently delete one | No visibility into or action on clearance requests |
+| Super Admin | Creates admin accounts, and can reset a password or permanently delete one; there is exactly one super admin account and it cannot create another; cannot create File Management/reviewer accounts directly | No visibility into or action on clearance requests |
 
-There is no administrator role. Registration currently allows users to select
-their own role and department without an approval step; see
-[Known limitations](#known-limitations).
+There is no self-registration. Every File Management/reviewer account is
+created by an admin from the `/admin` dashboard; every admin account is
+created by a super admin from `/super-admin`. The very first account of all
+is created once through an in-browser first-run setup flow on a brand-new
+deployment (zero accounts in the database), which creates a super admin.
 
 ## Clearance workflow
 
 1. **Account access**
-   - Staff sign in with an email and password or create an account at
-     `/register`.
+   - Staff sign in with an email and password. File Management/reviewer
+     accounts are created by an admin from `/admin`; admin accounts are
+     created by a super admin from `/super-admin` — there is no self-service
+     sign-up at any level.
+   - A brand-new deployment (zero accounts) shows an in-browser first-run
+     setup form instead of a login screen, to create the first (super admin)
+     account.
    - Reviewer department choices come from the seeded `Department` records.
-   - IT registration additionally requires one unclaimed checklist item.
+     For IT, the admin also picks one unclaimed checklist item for that
+     reviewer.
+   - Anyone locked out can find an admin's (or super admin's) contact info
+     from the login page without needing a token first (password resets are
+     admin- or super-admin-assisted, not self-service; IT no longer has a
+     special role in this, see below).
 
 2. **File Management creates the request**
    - File Management enters the employee's name, employee number, job title,
@@ -196,6 +213,8 @@ DemoPassw0rd!
 
 | Account | Email |
 |---|---|
+| Super Admin | `superadmin@demo.local` |
+| Admin | `admin@demo.local` |
 | File Management | `file.management@demo.local` |
 | A non-IT department reviewer | `<department-key>@demo.local` |
 | IT Mobile and Data Lines | `it.mobile_data_lines@demo.local` |
@@ -216,7 +235,7 @@ The seed creates two requests using evidence from `frontend/src/assets`:
 | `DEMO-1001` | Fully signed, File Management approved, access revoked, and completed |
 | `DEMO-1002` | Fully signed and approved; waiting only for IT to revoke access |
 
-The seed is idempotent. It upserts the 13 departments and 18 demo accounts,
+The seed is idempotent. It upserts the 13 departments and 20 demo accounts,
 then replaces only the two fixed demo requests and their evidence directories.
 Unrelated users and requests are preserved.
 
@@ -263,8 +282,14 @@ All routes are prefixed with `/api`.
 |---|---|
 | `GET /health` | Health check |
 | `POST /auth/login` | Authenticate and issue a JWT |
-| `POST /auth/register` | Create and authenticate a staff account |
-| `GET /departments` | Public department/reference data for registration |
+| `GET /auth/setup-status` | Public: whether the database has zero accounts and needs first-run setup |
+| `POST /auth/setup` | Public, one-time only: create the first (super admin) account on a brand-new deployment |
+| `GET /auth/accounts` | Admin: list File Management/reviewer accounts. Super admin: list admin accounts |
+| `POST /auth/accounts` | Admin: create a File Management or reviewer account. Super admin: create an admin account (only one super admin can ever exist) |
+| `POST /auth/reset-password` | Admin/super admin: issue a one-time password, scoped to the accounts they manage (IT has no special access here) |
+| `POST /auth/delete-account` | Admin/super admin: permanently delete an account, scoped to the accounts they manage (IT has no special access here) |
+| `GET /auth/it-contacts` / `GET /auth/admin-contacts` | Public: IT/admin/super-admin contact info. Admin contacts are who a locked-out user should actually reach for a password reset |
+| `GET /departments` | Public department/reference data used by dashboards and the admin/super-admin account-creation forms |
 | `POST /requests` | File Management creates a clearance request |
 | `GET /requests` | Role-filtered request list |
 | `GET /requests/:id` | Role-filtered request detail |
@@ -328,7 +353,7 @@ Egas-clearance/
 │       ├── components/         Dashboards, evidence, signatures, controls
 │       ├── context/            Authentication and theme state
 │       ├── locales/            Arabic and English translations
-│       ├── pages/              Login, registration, and role dashboards
+│       ├── pages/              Login, first-run setup, and role dashboards
 │       └── utils/              Formatting and leaving-reason helpers
 ├── CLAUDE.md                   Detailed engineering and business rules
 └── PROJECT_STATUS.md           Historical implementation tracker
@@ -358,8 +383,9 @@ git diff --check
 
 - Authentication is application-local; there is no real LDAP or Active
   Directory integration yet.
-- Self-registration has no administrator approval workflow and should not be
-  exposed unchanged in production.
+- Password resets are admin- or super-admin-assisted (a one-time password
+  handed off directly); IT no longer has a role in this. There is no email
+  infrastructure for self-service reset links.
 - `revoke-access` records that IT completed the external access-removal task;
   it does not call an identity provider or directory API.
 - Uploaded evidence is stored on the backend filesystem rather than durable

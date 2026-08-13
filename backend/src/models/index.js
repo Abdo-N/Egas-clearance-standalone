@@ -68,7 +68,7 @@ const User = sequelize.define(
     passwordHash: { type: DataTypes.STRING, allowNull: false },
     fullName: { type: DataTypes.STRING, allowNull: false },
     fullName_ar: { type: DataTypes.STRING, allowNull: true },
-    role: { type: DataTypes.ENUM("file_management", "reviewer"), allowNull: false },
+    role: { type: DataTypes.ENUM("file_management", "reviewer", "admin", "super_admin"), allowNull: false },
     departmentKey: { type: DataTypes.STRING, allowNull: true },
     assignedItemKey: { type: DataTypes.STRING, allowNull: true },
     landlineNumber: { type: DataTypes.STRING, allowNull: true },
