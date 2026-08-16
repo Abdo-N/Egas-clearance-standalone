@@ -1,0 +1,131 @@
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>التوثيق التقني والمعماري — منظومة إخلاء طرف الموظفين</title><link rel="stylesheet" href="manual-ar.css"></head><body>
+<section class="cover"><img class="logo" src="../../frontend/src/assets/egas-logo.png"><div class="eyebrow">دليل هندسي · الإصدار ٢٫٠</div><h1>التوثيق التقني والمعماري</h1><p class="subtitle">المعمارية ونموذج البيانات وقواعد العمل وواجهات API ونقاط التوسعة والتشغيل وإجراءات التغيير الآمن.</p><div class="meta">منظومة إخلاء طرف الموظفين — إيجاس<br>Node.js · Express · PostgreSQL · Sequelize · React · Vite<br>١٦ أغسطس ٢٠٢٦</div></section>
+
+<h2>الجمهور والنطاق</h2><p class="lead">هذا الدليل للمطورين ومسئولي قواعد البيانات والتشغيل الذين يحتاجون إلى فهم التطبيق أو صيانته أو توسيعه أو استكشاف أعطاله. أُعدّ من المستودع الفعلي والنسخة المحلية العاملة.</p>
+<table class="toc"><tr><td>١. نظرة عامة ومعمارية النظام</td><td>التعريف</td></tr><tr><td>٢. خريطة المستودع وبيئة التشغيل</td><td>المطورون</td></tr><tr><td>٣. نموذج البيانات العلائقي</td><td>الخلفية / DBA</td></tr><tr><td>٤. قواعد العمل والصلاحيات</td><td>جميع القائمين بالصيانة</td></tr><tr><td>٥. واجهات API ودورة الطلب</td><td>الخلفية / التكامل</td></tr><tr><td>٦. معمارية الواجهة الأمامية</td><td>الواجهة الأمامية</td></tr><tr><td>٧. الأدلة وملفات PDF</td><td>الخلفية / التشغيل</td></tr><tr><td>٨. وصفات التغيير الآمن</td><td>تطوير الخصائص</td></tr><tr><td>٩. النشر والاختبار والاستعادة</td><td>التشغيل</td></tr><tr><td>١٠. المخاطر وقائمة الصيانة</td><td>مالكو النظام</td></tr></table>
+<div class="callout"><b>المصادر المرجعية:</b> المخطط في <span class="tag">backend/src/models/index.js</span>، والإدارات في <span class="tag">backend/src/seed/departments.data.js</span>، والصلاحيات في ملفات المسارات ووسيط المصادقة، والسلوك الحالي في الاختبارات والتطبيق العامل.</div>
+
+<section class="page"><h2>١. نظرة عامة ومعمارية النظام</h2><p>تقوم المنظومة برقمنة إخلاء طرف موظفي إيجاس. يتصل تطبيق React أحادي الصفحة بواجهة Express JSON. تتحقق Express من رموز JWT والصلاحيات، وتحفظ البيانات في PostgreSQL عبر Sequelize، وتحفظ أدلة التوقيع على القرص، وتولد نموذج PDF مركبًا من القالب الرسمي.</p>
+<div class="diagram"><div class="row"><div class="node">المتصفح<br><small>React + i18next</small></div></div><div class="arrow">↓ HTTPS / JSON / multipart</div><div class="row"><div class="node">واجهة Express API<br><small>JWT وحراسة الأدوار</small></div><div class="node">خدمة PDF<br><small>pdf-lib + canvas</small></div></div><div class="arrow">↓　　　　　　　　　↓</div><div class="row"><div class="node">PostgreSQL<br><small>Sequelize</small></div><div class="node">uploads/<br><small>ملفات الأدلة</small></div><div class="node">قالب PDF<br><small>backend/assets</small></div></div></div>
+<table><thead><tr><th>الطبقة</th><th>التقنية</th><th>المسئولية</th></tr></thead><tbody><tr><td>الواجهة الأمامية</td><td>React 18، Vite، React Router، Axios، Recharts</td><td>لوحات الأدوار والنماذج والتحليلات والمعاينة.</td></tr><tr><td>الترجمة</td><td>react-i18next</td><td>واجهة عربية/إنجليزية ودعم RTL.</td></tr><tr><td>الخلفية</td><td>Node.js، Express 4</td><td>REST والتحقق وقواعد العمل وتقديم الملفات.</td></tr><tr><td>المصادقة</td><td>JWT، bcryptjs</td><td>الدخول بالبريد وكلمة المرور وإعادة التحقق.</td></tr><tr><td>قاعدة البيانات</td><td>PostgreSQL، Sequelize</td><td>الحسابات والقوالب ولقطات الطلب وحالة التدقيق.</td></tr><tr><td>الأدلة وPDF</td><td>multer، pdf-lib، fontkit، canvas</td><td>رفع الملفات ومعاينتها ودمجها في القالب.</td></tr></tbody></table>
+<div class="callout warning"><b>شكل التشغيل:</b> تستخدم بيئة التطوير Vite على المنفذ 5173 وAPI على 4000. عند وجود <span class="tag">frontend/dist</span> تقدم Express الواجهة المبنية وAPI من عملية Node واحدة.</div></section>
+
+<section class="page"><h2>٢. خريطة المستودع وبيئة التشغيل</h2><div class="tree">Egas-clearance-standalone/
+├── backend/
+│   ├── assets/                 PDF template, Cairo fonts, demo evidence
+│   ├── scripts/                smoke-test.js, stress-test.js
+│   ├── src/
+│   │   ├── config/db.js        connection + sequelize.sync({alter:true})
+│   │   ├── middleware/         JWT and role/department guards
+│   │   ├── models/index.js     models and associations
+│   │   ├── routes/             auth, departments, requests
+│   │   ├── seed/               templates and demo data
+│   │   ├── services/           request assembly + clearance PDF
+│   │   └── server.js           application entry point
+│   └── uploads/                runtime evidence; gitignored
+├── frontend/
+│   └── src/
+│       ├── api/client.js       Axios + JWT interceptor
+│       ├── components/         shared UI
+│       ├── context/            auth and theme
+│       ├── locales/            en.json and ar.json
+│       ├── pages/              role screens
+│       └── App.jsx             routes and guards
+├── README.md
+├── CLAUDE.md
+└── PROJECT_STATUS.md</div>
+<h3>أوامر التشغيل المحلي</h3><div class="code">npm install
+npm install --prefix backend
+npm install --prefix frontend
+
+# configure backend/.env
+npm run seed:dev --prefix backend
+npm run dev
+
+# production-like departments only
+npm run seed:final --prefix backend
+
+npm run build --prefix frontend</div>
+<h3>متغيرات البيئة</h3><div class="code">PORT=4000
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/egas_clearance
+JWT_SECRET=replace_with_a_long_random_secret
+JWT_EXPIRES_IN=8h</div><p>يلزم Node.js 18 أو أحدث وPostgreSQL متاح. لا ترفع <span class="tag">backend/.env</span> أو أسرار الإنتاج إلى Git.</p></section>
+
+<section class="page"><h2>٣. نموذج البيانات العلائقي</h2><p>انتقل التطبيق من MongoDB إلى PostgreSQL مع الحفاظ على شكل الطلب المتداخل القديم بواسطة <span class="tag">requestAssembly.js</span>. بريد المستخدم هو المفتاح <span class="tag">users.userID</span>، ومفتاح الإدارة هو <span class="tag">departments.key</span>، وتستخدم الطلبات UUID.</p>
+<div class="diagram"><div class="row"><div class="node">departments<br><small>key PK</small></div><div class="node">users<br><small>userID PK</small></div></div><div class="arrow">الإدارات 1 ← متعدد: بنود القوائم والمستخدمون</div><div class="row"><div class="node">clearance_requests<br><small>id UUID PK</small></div></div><div class="arrow">1 ← متعدد</div><div class="row"><div class="node">request_departments<br><small>طلب + إدارة فريد</small></div></div><div class="arrow">1 ← متعدد</div><div class="row"><div class="node">request_items<br><small>لقطة بند IT</small></div></div></div>
+<table><thead><tr><th>الجدول</th><th>الغرض والحقول المهمة</th></tr></thead><tbody><tr><td>departments</td><td>قالب الإدارات الـ١٣: الاسمان والترتيب والمرحلة والإشراف ونمط التوقيع.</td></tr><tr><td>department_checklist_items</td><td>قالب البنود الخمسة لتكنولوجيا المعلومات.</td></tr><tr><td>users</td><td>البريد كمفتاح، hash، الدور، الإدارة، بند IT، الهاتف، وإجبار تغيير كلمة المرور.</td></tr><tr><td>clearance_requests</td><td>بيانات الموظف والمغادرة والمنشئ والحالة والاعتماد وسجل إزالة الصلاحيات.</td></tr><tr><td>request_departments</td><td>لقطة كل إدارة مع التوقيع وبيانات الدليل وهوية الموقع والوقت والملاحظات.</td></tr><tr><td>request_items</td><td>لقطة بنود IT وتوقيع ودليل كل بند.</td></tr></tbody></table>
+<h3>قاعدة اللقطة التاريخية</h3><p>عند إنشاء الطلب، تنسخ الأسماء والترتيب والمرحلة ونمط التوقيع والبنود إلى صفوف تخص الطلب. تؤثر تغييرات القالب اللاحقة على الطلبات الجديدة فقط. لا تربط الطلبات التاريخية بالقالب الحي بدل اللقطة.</p>
+<div class="code">indexes: [{ unique: true,
+  fields: ["requestId", "departmentKey"] }]
+
+indexes: [{ unique: true,
+  fields: ["requestDepartmentId", "key"] }]</div>
+<div class="callout warning"><b>إدارة المخطط:</b> يستدعي بدء التشغيل <span class="tag">sequelize.sync({ alter: true })</span> ولا توجد migrations منفصلة. اختبر كل تعديل على نسخة شبيهة بالإنتاج وخذ نسخة احتياطية قبل التشغيل.</div></section>
+
+<section class="page"><h2>٤. قواعد العمل والصلاحيات</h2><div class="flow"><span>إنشاء<br>in_progress</span><b>‹</b><span>اكتمال المرحلة ١</span><b>‹</b><span>توقيع ١٣ إدارة</span><b>‹</b><span>اعتماد الوثائق</span><b>‹</b><span>إزالة الصلاحيات<br>completed</span></div>
+<ul><li>الإدارات ١–١١ تعمل بالتوازي.</li><li>لا تكتمل IT إلا باكتمال بنود الطلب الخمسة.</li><li>تُفتح الأجور والمالية بعد اكتمال المرحلة الأولى كلها.</li><li>إعادة الفتح تمسح التوقيع/الدليل وتلغي اعتماد إدارة الوثائق السابق.</li><li>توقيع الإدارات كلها لا يكفي؛ <span class="tag">accessRevoked</span> هو الشرط النهائي.</li></ul>
+<table><thead><tr><th>الدور</th><th>حدود المسارات والبيانات</th></tr></thead><tbody><tr><td>file_management</td><td>جميع الملخصات والأدلة؛ إنشاء وإعادة فتح واعتماد وحذف الطلبات المكتملة وPDF، مع إخفاء هوية الموقع.</td></tr><tr><td>reviewer</td><td>الإدارة الخاصة فقط، عدا إشراف الأجور/المالية. IT تحصل على مؤشرات جاهزية آمنة.</td></tr><tr><td>admin</td><td>إدارة file_management وreviewer فقط، دون وصول للطلبات.</td></tr><tr><td>super_admin</td><td>إدارة admin فقط، وحساب وحيد ينشأ من إعداد قاعدة فارغة.</td></tr></tbody></table>
+<div class="code">const MANAGEABLE_ROLES_BY_ACTOR = {
+  admin: ["file_management", "reviewer"],
+  super_admin: ["admin"],
+};</div>
+<p>تفرض الخلفية الصلاحيات. حراس React لتحسين التجربة وليسوا حدًا أمنيًا. يحمل JWT هوية المستخدم والدور والإدارة وبند IT وحالة الإشراف وتغيير كلمة المرور الإجباري.</p>
+<div class="callout danger"><b>لا تضعف حجب البيانات.</b> يجب أن تطبق المسارات الجديدة حدود الدور والإدارة والبند والدليل وهوية الموقع نفسها الموجودة في مسارات الطلبات.</div></section>
+
+<section class="page"><h2>٥. واجهات API ودورة الطلب</h2><p>تبدأ المسارات بـ <span class="tag">/api</span>. يضيف Axios الرمز من localStorage في ترويسة Bearer.</p>
+<table><thead><tr><th>الطريقة والمسار</th><th>الغرض والصلاحية</th></tr></thead><tbody><tr><td>GET /health</td><td>فحص سلامة العملية.</td></tr><tr><td>POST /auth/login</td><td>تحويل بيانات الدخول إلى رمز.</td></tr><tr><td>GET /auth/setup-status<br>POST /auth/setup</td><td>الإعداد الأول؛ ينشئ المسؤول الرئيسي فقط إذا كان عدد المستخدمين صفرًا.</td></tr><tr><td>GET/POST /auth/accounts</td><td>للمسؤولين ومفلتر حسب الأدوار المسموح بها.</td></tr><tr><td>POST /auth/reset-password<br>POST /auth/delete-account</td><td>إعادة تعيين/حذف مع حدود الدور وإعادة التحقق.</td></tr><tr><td>POST /auth/set-new-password</td><td>استبدال كلمة المرور المؤقتة.</td></tr><tr><td>GET /departments</td><td>قالب عام للنماذج.</td></tr><tr><td>GET /departments/coverage</td><td>فجوات التغطية في المسؤول والوثائق والمراجعين.</td></tr><tr><td>POST /requests</td><td>إنشاء الطلب ولقطات الإدارات.</td></tr><tr><td>GET /requests و /:id</td><td>قائمة/تفاصيل حسب الدور.</td></tr><tr><td>POST /requests/:id/sign</td><td>توقيع إدارة عادية مع دليل.</td></tr><tr><td>POST /requests/:id/items/:itemKey/sign</td><td>توقيع بند IT مع دليل.</td></tr><tr><td>POST .../reopen</td><td>مسح التوقيع والدليل للمخول.</td></tr><tr><td>POST /requests/:id/approve</td><td>اعتماد إدارة الوثائق.</td></tr><tr><td>POST /requests/:id/revoke-access</td><td>إجراء IT النهائي وحساب الاكتمال.</td></tr><tr><td>GET .../evidence/...</td><td>تقديم دليل بعد فحص الصلاحية.</td></tr><tr><td>GET /requests/:id/pdf</td><td>توليد PDF بعد فحص الصلاحية.</td></tr></tbody></table>
+<h3>نمط مسار الكتابة</h3><ol><li>المصادقة والتحقق من الدور/الإدارة/البند.</li><li>جلب الطلب المجمع للتحقق من قواعد العمل.</li><li>إعادة التحقق من كلمة المرور للإجراء المؤثر.</li><li>فحص الملف وشروط انتقال الحالة.</li><li>تحديث صفوف Sequelize المحددة.</li><li>إعادة الجلب ومزامنة الحالة العامة.</li><li>إرجاع العرض المسموح للدور فقط.</li></ol></section>
+
+<section class="page"><h2>٦. معمارية الواجهة الأمامية</h2><p>يعرف <span class="tag">App.jsx</span> المسارات العامة وأربع لوحات محمية. يحول <span class="tag">RequireRole</span> غير المسجلين، ويفرض تغيير الكلمة المؤقتة، ويمنع عرض دور خاطئ.</p>
+<div class="code">/login             Login.jsx
+/setup             FirstRunSetup.jsx
+/set-new-password  SetNewPassword.jsx
+/file-management   FileManagementDashboard.jsx
+/reviewer          ReviewerDashboard.jsx
+/admin             AdminDashboard.jsx
+/super-admin       AdminDashboard.jsx</div>
+<img class="shot" src="assets-ar/04-oversight-ar.png"><p class="caption">واجهة المراجع العربية الفعلية وتوضح الجداول والمخططات والترجمة والعرض المبني على الدور.</p>
+<h3>الحالة والمكونات المشتركة</h3><ul><li><span class="tag">AuthContext.jsx</span>: الدخول والرمز والمستخدم والخروج.</li><li><span class="tag">ThemeContext.jsx</span>: الوضع الفاتح/الداكن.</li><li><span class="tag">DepartmentDashboard.jsx</span>: تخطيط المراجع والتحليلات.</li><li><span class="tag">SignaturePanel.jsx</span>: كلمة المرور والدليل.</li><li><span class="tag">EvidencePreview.jsx</span>: معاينة آمنة للصورة/PDF.</li><li><span class="tag">RequestOversightGrid.jsx</span>: إشراف ١٣ إدارة.</li><li><span class="tag">SetupCoverageWarning.jsx</span>: تحذيرات نقص التغطية.</li></ul>
+<h3>قاعدة الترجمة</h3><p>يجب إضافة كل نص جديد إلى <span class="tag">en.json</span> و<span class="tag">ar.json</span>. اختبر العربية RTL والإنجليزية، بما فيها النصوص الطويلة والجداول والنوافذ والمخططات. لا تكتب نصوص الواجهة مباشرة داخل المكونات.</p></section>
+
+<section class="page"><h2>٧. الأدلة وملفات إخلاء الطرف</h2><p>تُحفظ الأدلة تحت <span class="tag">backend/uploads/&lt;requestId&gt;/</span>. تحفظ قاعدة البيانات الرابط وMIME والاسم الأصلي، بينما تقرر المسارات المحمية حق المستخدم في الملف.</p>
+<p>تقبل مسارات التوقيع JPG وPNG وWEBP وPDF. يجب أن يظل التحقق متسقًا بين إرشاد الواجهة وmulter والمعاينة والبيانات التجريبية ودمج PDF.</p>
+<div class="flow"><span>قالب PDF الرسمي</span><b>+</b><span>بيانات الطلب</span><b>+</b><span>أدلة التوقيع</span><b>‹</b><span>PDF مركب</span></div>
+<p>تحمل <span class="tag">clearancePdf.js</span> القالب، وتضمن خطوط Cairo، وتعالج الصور وPDF، وتضع التوقيعات في إحداثيات الإدارات، ثم تعيد الملف. لا تستبدل النموذج قبل التحقق من المقاسات وكل الإحداثيات.</p>
+<div class="callout warning"><b>دورة حياة الأدلة:</b> إعادة الفتح أو حذف الطلب يمس قاعدة البيانات والملفات معًا. يجب نسخ قاعدة البيانات ومجلد uploads واستعادتهما كوحدة واحدة.</div>
+<ul><li>لا تقدم uploads كمجلد static عام.</li><li>احتفظ بتطبيع المسار وفحص الصلاحية.</li><li>لا تثق في الاسم الأصلي كمسار تخزين.</li><li>تحقق من النوع والحجم في الخادم.</li><li>لا تسجل كلمات المرور أو JWT أو محتوى الأدلة أو رابط DB كاملًا.</li></ul></section>
+
+<section class="page"><h2>٨. وصفات التغيير الآمن</h2><h3>إضافة إدارة أو تعديلها</h3><ol><li>عدّل <span class="tag">departments.data.js</span> بمفتاح ثابت واسمين وترتيب ومرحلة وإشراف ونمط توقيع.</li><li>حدّث قالب PDF ومواضع التوقيع إذا تغيرت الصفوف.</li><li>شغّل upsert الإدارات المناسب.</li><li>أنشئ حسابات التغطية؛ ولكل بند IT مالك واحد.</li><li>اختبر طلبًا جديدًا وتأكد أن الطلبات القديمة حافظت على لقطاتها.</li><li>حدّث الترجمات والعرض والاختبارات والوثائق.</li></ol>
+<div class="callout danger"><b>لا تغير مفتاح الإدارة بسهولة.</b> هو مفتاح طبيعي وأجنبي ويظهر في المستخدمين واللقطات والمسارات والعرض وخرائط PDF. اعتبر تغييره migration بيانات.</div>
+<h3>إضافة سبب مغادرة</h3><ol><li>أضف قيمة enum ثابتة إلى <span class="tag">LEAVING_REASONS</span>.</li><li>أضف التسميات العربية والإنجليزية وخرائط المساعدة.</li><li>اختبر الإنشاء والقوائم والتحليلات وPDF والبيانات التجريبية.</li><li>خذ نسخة قبل أن تغير Sequelize enum الإنتاج.</li></ol>
+<h3>إضافة حقل</h3><ol><li>حدد هل يخص القالب الحي أم لقطة الطلب أم كليهما.</li><li>أضف تحقق النموذج وAPI.</li><li>حدّث التجميع والإسقاط والحجب حتى لا يتسرب.</li><li>حدّث المسارات والنموذج والعرض والترجمتين وPDF والاختبارات.</li><li>اختبر alter على نسخة مماثلة للإنتاج.</li></ol>
+<h3>إضافة دور أو صلاحية</h3><p>حدّث enum وJWT والوسيط والمسارات والحجب والتوجيه وتسلسل إدارة الحسابات وفحص التغطية والترجمات والاختبارات. ابدأ بصلاحيات الخادم ثم العرض.</p></section>
+
+<section class="page"><h2>تعديل البيانات أو حذفها بأمان</h2><table><thead><tr><th>الحاجة</th><th>الطريقة المفضلة</th><th>ما يجب تجنبه</th></tr></thead><tbody><tr><td>إنشاء/إعادة/حذف مستخدم</td><td>واجهة المسؤول أو API المصدق.</td><td>SQL مباشر يتجاوز hash والقواعد.</td></tr><tr><td>تعديل قالب الإدارات</td><td>مصدر البيانات ثم upsert المتكرر بأمان.</td><td>تغيير لقطات الطلبات التاريخية جماعيًا.</td></tr><tr><td>حذف طلب</td><td>إجراء إدارة الوثائق المخول على طلب مكتمل، ويتعامل مع DB والملفات.</td><td>حذف الصف فقط أو الملفات فقط.</td></tr><tr><td>تصحيح دليل</td><td>إعادة فتح الإدارة/البند ثم التوقيع.</td><td>استبدال الملف على القرص.</td></tr><tr><td>تصحيح تاريخي</td><td>migration معتمدة ومدعومة بنسخة وtransaction.</td><td>SQL عشوائي على الإنتاج.</td></tr></tbody></table>
+<div class="code">BEGIN;
+SELECT ... FOR UPDATE;
+
+UPDATE ... WHERE ...;
+
+SELECT ...;  -- verify counts and invariants
+COMMIT;      -- or ROLLBACK</div>
+<p>استخدم نافذة صيانة للتغييرات المهمة، وسجل المفاتيح المتأثرة والعدد المتوقع وخطوات الرجوع. لا تعدل <span class="tag">passwordHash</span> يدويًا؛ استخدم مسار إعادة التعيين.</p></section>
+
+<section class="page"><h2>٩. النشر والاختبار والاستعادة</h2><h3>قائمة الإصدار</h3><ul class="checklist"><li>راجع git diff واستبعد الأسرار والأدلة والملفات المؤقتة.</li><li>انسخ PostgreSQL وuploads معًا.</li><li>ثبت الاعتماديات من lockfiles وبنسخة Node مدعومة.</li><li>ابنِ الواجهة بنجاح.</li><li>اختبر المخطط على staging أو نسخة مستعادة.</li><li>شغل smoke test على قاعدة غير إنتاجية مزروعة.</li><li>اختبر لوحات الأدوار بالعربية والإنجليزية.</li><li>اختبر الدخول والتوقيع وإعادة الفتح والاعتماد والمعاينة وPDF وإزالة الصلاحيات.</li><li>انشر وافحص <span class="tag">GET /api/health</span>.</li><li>تأكد من تغطية المسؤول وإدارة الوثائق والإدارات وبنود IT.</li></ul>
+<div class="code"># terminal 1
+npm run dev
+
+# terminal 2 — seeded, non-production server
+node backend/scripts/smoke-test.js
+
+npm run build --prefix frontend
+
+# review before using; never target production casually
+node backend/scripts/stress-test.js</div>
+<p>تنشئ smoke test حسابات وطلبات مؤقتة وتختبر حدود الأدوار والمسار الكامل. لا توجه اختبارات الحذف أو الضغط إلى الإنتاج دون مراجعة صريحة.</p>
+<h3>وحدة النسخ والاستعادة</h3><p>تشمل النسخة الكاملة قاعدة PostgreSQL ومجلد uploads ومراجعة الكود المنشورة وقالب PDF ومتغيرات البيئة في مخزن أسرار معتمد. اختبر الاستعادة في بيئة معزولة وافحص معاينة الدليل وتوليد PDF، وليس عدد الصفوف فقط.</p></section>
+
+<section class="page"><h2>١٠. المخاطر وقائمة الصيانة</h2><table><thead><tr><th>الخطر</th><th>الأثر</th><th>التخفيف</th></tr></thead><tbody><tr><td>قفل المسؤول الرئيسي</td><td>لا يستطيع دور آخر إعادة تعيينه.</td><td>حفظ آمن واعتماد إجراء استعادة تنظيمي مجرّب.</td></tr><tr><td>تعديل المخطط تلقائيًا</td><td>قد ينفذ sync alter تغييرات عند البدء.</td><td>نسخ وstaging وإصدارات مضبوطة؛ التفكير في migrations رسمية.</td></tr><tr><td>الأدلة على الملفات</td><td>نسخة DB وحدها ناقصة والتوسع يحتاج تخزينًا مشتركًا.</td><td>نسخ موحد ووحدة دائمة؛ object storage عند التوسع.</td></tr><tr><td>JWT في localStorage</td><td>XSS قد يكشف الجلسة.</td><td>CSP ونظافة المدخلات وتجنب HTML غير الآمن؛ دراسة HttpOnly cookies.</td></tr><tr><td>مسارات الإعداد والاتصال العامة</td><td>سطح غير مصدق مقصود.</td><td>أقل حقول ممكنة وإعادة فحص users=0 لحظيًا.</td></tr><tr><td>تقادم الوثائق</td><td>القواعد المتغيرة تجعل الإجراءات غير آمنة.</td><td>تحديث README وCLAUDE وPROJECT_STATUS والاختبارات والأدلة مع التغيير.</td></tr></tbody></table>
+<h3>تعريف اكتمال أي تغيير</h3><ul class="checklist"><li>قاعدة العمل وأثر الصلاحية واضحان.</li><li>التحقق والحجب في الخادم مختبران.</li><li>لقطات الطلبات الجارية ما زالت صحيحة.</li><li>العربية RTL والإنجليزية سليمتان.</li><li>أثر الأدلة وPDF تم التحقق منه.</li><li>build وsmoke test ناجحان.</li><li>خطة النشر والرجوع موجودة.</li><li>الوثائق محدثة.</li></ul>
+<div class="callout success"><b>المبدأ المعماري الأساسي:</b> حافظ على لقطات الطلب التاريخية وطبّق كل صلاحية في الخادم. الواجهة والوثائق وانضباط قاعدة البيانات تدعم هاتين القاعدتين ولا تستبدلهما.</div><p class="footer-note">تم التحقق من هذا الدليل مقابل المستودع والتطبيق المحلي في ١٦ أغسطس ٢٠٢٦. راجع آخر كود وحالة المشروع قبل أي تغيير إنتاجي.</p></section>
+</body></html>

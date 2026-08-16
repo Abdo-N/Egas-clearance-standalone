@@ -1,0 +1,7 @@
+@import url('manual.css');
+@page{size:A4;margin:17mm 16mm 18mm;@bottom-right{content:"منظومة إخلاء طرف الموظفين — إيجاس";font:8pt Cairo;color:#64748b}@bottom-left{content:"صفحة " counter(page) " من " counter(pages);font:8pt Cairo;color:#64748b}}
+/* Keep Chromium's physical print canvas LTR so A4 margins remain symmetric.
+   Apply RTL to the document body instead of the root formatting context. */
+html{direction:ltr;font-family:Cairo,Arial,sans-serif}
+body{direction:rtl;text-align:right}
+ul,ol{padding-right:22px;padding-left:0}.steps li{padding:2px 34px 10px 0}.steps li:before{right:0;left:auto}.callout{border-left:0;border-right:5px solid #0e7490}.warning{border-right-color:#d97706}.danger{border-right-color:#b91c1c}.success{border-right-color:#15803d}th{text-align:right}.toc td:last-child{text-align:left}.checklist li:before{margin-left:7px;margin-right:0}.code,.tree{direction:ltr;text-align:left}.flow{direction:rtl}.cover{direction:rtl;text-align:right}.footer-note{text-align:right}

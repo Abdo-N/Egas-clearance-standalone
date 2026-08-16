@@ -1,0 +1,139 @@
+<!doctype html><html><head><meta charset="utf-8"><title>EGAS Employee Clearance System — Technical & Architecture Documentation</title><link rel="stylesheet" href="manual.css"></head><body>
+<section class="cover"><img class="logo" src="../../frontend/src/assets/egas-logo.png"><div class="eyebrow">Engineering Guide · Version 2.0</div><h1>Technical & Architecture Documentation</h1><p class="subtitle">Architecture, data model, business rules, APIs, extension points, operations, and safe change procedures.</p><div class="meta">EGAS Employee Clearance System<br>Node.js · Express · PostgreSQL · Sequelize · React · Vite<br>16 August 2026</div></section>
+
+<h2>Audience and scope</h2><p class="lead">This guide is for developers and database/operations staff who need to understand, maintain, extend, or troubleshoot the application. It is based on the live repository and running local instance—not a generic template.</p>
+<table class="toc"><tr><td>1. System overview and architecture</td><td>Orientation</td></tr><tr><td>2. Repository map and runtime</td><td>Developers</td></tr><tr><td>3. Relational data model</td><td>Backend / DBA</td></tr><tr><td>4. Business rules and authorization</td><td>All maintainers</td></tr><tr><td>5. API and request lifecycle</td><td>Backend / integrations</td></tr><tr><td>6. Frontend architecture</td><td>Frontend</td></tr><tr><td>7. PDFs and evidence storage</td><td>Backend / operations</td></tr><tr><td>8. Safe change recipes</td><td>Feature work</td></tr><tr><td>9. Deployment, testing, and recovery</td><td>Operations</td></tr><tr><td>10. Risks and maintainer checklist</td><td>Owners</td></tr></table>
+<div class="callout"><b>Canonical sources:</b> schema in <span class="tag">backend/src/models/index.js</span>; departments in <span class="tag">backend/src/seed/departments.data.js</span>; authorization in the route files and auth middleware; current behavior in tests and running application.</div>
+
+<section class="page"><h2>1. System overview and architecture</h2><p>The system digitizes EGAS employee clearance. A React single-page application calls an Express JSON API. Express authenticates JWTs, enforces role and department boundaries, stores relational state in PostgreSQL through Sequelize, stores uploaded evidence on disk, and generates a composited clearance PDF from an official template.</p>
+<div class="diagram"><div class="row"><div class="node">Browser<br><small>React + i18next</small></div></div><div class="arrow">↓ HTTPS / JSON / multipart</div><div class="row"><div class="node">Express API<br><small>JWT + role guards</small></div><div class="node">PDF service<br><small>pdf-lib + canvas</small></div></div><div class="arrow">↓　　　　　　　　　↓</div><div class="row"><div class="node">PostgreSQL<br><small>Sequelize</small></div><div class="node">uploads/<br><small>evidence files</small></div><div class="node">PDF template<br><small>backend/assets</small></div></div></div>
+<h3>Technology choices</h3><table><thead><tr><th>Layer</th><th>Technology</th><th>Responsibility</th></tr></thead><tbody><tr><td>Frontend</td><td>React 18, Vite, React Router, Axios, Recharts</td><td>Role dashboards, forms, analytics, previews.</td></tr><tr><td>Localization</td><td>react-i18next</td><td>Arabic-first bilingual UI and RTL direction.</td></tr><tr><td>Backend</td><td>Node.js, Express 4</td><td>REST API, validation, business logic, file delivery.</td></tr><tr><td>Authentication</td><td>JWT, bcryptjs</td><td>Email/password login and password re-authentication.</td></tr><tr><td>Database</td><td>PostgreSQL, Sequelize</td><td>Users, templates, request snapshots, status/audit data.</td></tr><tr><td>Evidence/PDF</td><td>multer, pdf-lib, fontkit, canvas/image codecs</td><td>Upload validation, preview, template compositing.</td></tr></tbody></table>
+<div class="callout warning"><b>Deployment shape:</b> development uses Vite on port 5173 and the API on 4000. When <span class="tag">frontend/dist</span> exists, Express serves the built SPA and API from one Node process.</div></section>
+
+<section class="page"><h2>2. Repository map and runtime</h2><div class="tree">Egas-clearance-standalone/
+├── backend/
+│   ├── assets/                 PDF template, Cairo fonts, demo evidence
+│   ├── scripts/                smoke-test.js, stress-test.js
+│   ├── src/
+│   │   ├── config/db.js        connection + sequelize.sync({alter:true})
+│   │   ├── middleware/         JWT and role/department guards
+│   │   ├── models/index.js     all models and associations
+│   │   ├── routes/             auth, departments, requests
+│   │   ├── seed/               templates and demo data
+│   │   ├── services/           request assembly + clearance PDF
+│   │   └── server.js           application entry point
+│   └── uploads/                runtime evidence; gitignored
+├── frontend/
+│   ├── public/fonts/           Cairo web fonts
+│   └── src/
+│       ├── api/client.js       Axios + JWT interceptor
+│       ├── components/         reusable dashboard/UI pieces
+│       ├── context/            auth and theme state
+│       ├── locales/            en.json and ar.json
+│       ├── pages/              role-level screens
+│       └── App.jsx             route guards and routing
+├── README.md                   operator/user overview
+├── CLAUDE.md                   detailed engineering decisions
+└── PROJECT_STATUS.md           chronological living status</div>
+<h3>Local commands</h3><div class="code">npm install
+npm install --prefix backend
+npm install --prefix frontend
+
+# configure backend/.env, then:
+npm run seed:dev --prefix backend
+npm run dev
+
+# production-like data (departments only; no demo users):
+npm run seed:final --prefix backend
+
+# compile frontend:
+npm run build --prefix frontend</div>
+<h3>Required environment</h3><div class="code">PORT=4000
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/egas_clearance
+JWT_SECRET=replace_with_a_long_random_secret
+JWT_EXPIRES_IN=8h</div>
+<p>Node.js 18+ and a reachable PostgreSQL instance are required. Never commit <span class="tag">backend/.env</span> or production credentials.</p></section>
+
+<section class="page"><h2>3. Relational data model</h2><p>The application migrated from MongoDB to PostgreSQL while preserving the old nested request shape through <span class="tag">requestAssembly.js</span>. Natural keys are retained: user email is <span class="tag">users.userID</span>; department key is <span class="tag">departments.key</span>; requests use UUIDs.</p>
+<div class="diagram"><div class="row"><div class="node">departments<br><small>key PK</small></div><div class="node">users<br><small>userID PK</small></div></div><div class="arrow">departments 1 → many checklist items<br>departments 1 → many users</div><div class="row"><div class="node">clearance_requests<br><small>id UUID PK</small></div></div><div class="arrow">1 → many</div><div class="row"><div class="node">request_departments<br><small>request + department unique</small></div></div><div class="arrow">1 → many</div><div class="row"><div class="node">request_items<br><small>IT item snapshot</small></div></div></div>
+<table><thead><tr><th>Table</th><th>Purpose and important fields</th></tr></thead><tbody><tr><td>departments</td><td>Live 13-department template: bilingual names, order, tier, oversight flag, signature mode.</td></tr><tr><td>department_checklist_items</td><td>Live template for IT’s five itemized requirements.</td></tr><tr><td>users</td><td>Email PK, bcrypt hash, role, department assignment, optional IT item assignment, phone, forced-reset flag.</td></tr><tr><td>clearance_requests</td><td>Employee/departure facts, creator, overall status, File Management approval, access-removal audit fields.</td></tr><tr><td>request_departments</td><td>Per-request snapshot of every department plus signature, evidence metadata, signer identity, time, and oversight notes.</td></tr><tr><td>request_items</td><td>Per-request IT checklist snapshot plus item-level signature/evidence metadata.</td></tr></tbody></table>
+<h3>Snapshot invariant</h3><p>On creation, department names, order, tier, signature mode, and checklist items are copied into request-owned rows. Later template changes affect only future requests. Do not “simplify” reads by joining live department configuration into historical requests.</p>
+<div class="code">// RequestDepartment uniqueness
+indexes: [{ unique: true, fields: ["requestId", "departmentKey"] }]
+
+// RequestItem uniqueness
+indexes: [{ unique: true, fields: ["requestDepartmentId", "key"] }]</div>
+<div class="callout warning"><b>Schema management:</b> startup currently calls <span class="tag">sequelize.sync({ alter: true })</span>. There is no migrations directory. This is convenient for one small deployment but is risky for controlled production changes; back up and test every schema edit before startup.</div></section>
+
+<section class="page"><h2>4. Business rules and authorization</h2><h3>Workflow state machine</h3><div class="flow"><span>Created<br>in_progress</span><b>›</b><span>Tier 1 complete</span><b>›</b><span>All 13 signed</span><b>›</b><span>FM approved</span><b>›</b><span>Access revoked<br>completed</span></div>
+<ul><li>Departments 1–11 are Tier 1 and work concurrently.</li><li>IT is itemized and completes only when all five request items are complete.</li><li>Wages and Finance unlock only when every Tier-1 department completes.</li><li>Reopening clears the affected signature/evidence and revokes prior File Management approval.</li><li>All departments signed is insufficient for completion. <span class="tag">accessRevoked</span> is the final gate.</li></ul>
+<h3>Role hierarchy</h3><table><thead><tr><th>Role</th><th>Route/data boundary</th></tr></thead><tbody><tr><td>file_management</td><td>All request summaries/evidence; create, reopen, approve, delete completed requests, PDF. Signer identity is redacted.</td></tr><tr><td>reviewer</td><td>Own department only, except Wages/Finance oversight. IT receives safe readiness flags.</td></tr><tr><td>admin</td><td>Manage only file_management and reviewer users; no request access.</td></tr><tr><td>super_admin</td><td>Manage only admin users; no request access. Exactly one account, created only through empty-database setup.</td></tr></tbody></table>
+<div class="code">const MANAGEABLE_ROLES_BY_ACTOR = {
+  admin: ["file_management", "reviewer"],
+  super_admin: ["admin"],
+};</div>
+<p>Authorization is server-enforced. Frontend route guards improve UX but do not constitute security. JWT payloads identify the user, role, department, assigned IT item, oversight status, and forced-password-reset state.</p>
+<div class="callout danger"><b>Never weaken data redaction for convenience.</b> New endpoints must apply the same role, department, item, evidence, and signer-identity boundaries as existing request routes.</div></section>
+
+<section class="page"><h2>5. API and request lifecycle</h2><p>All application routes are under <span class="tag">/api</span>. The frontend Axios client uses relative URLs and attaches <span class="tag">Authorization: Bearer &lt;token&gt;</span> from local storage.</p>
+<table><thead><tr><th>Method/path</th><th>Purpose / principal authorization</th></tr></thead><tbody><tr><td>GET /health</td><td>Process health check.</td></tr><tr><td>POST /auth/login</td><td>Public credential exchange.</td></tr><tr><td>GET /auth/setup-status<br>POST /auth/setup</td><td>Public first-run check; setup creates the sole Super Admin only when user count is zero.</td></tr><tr><td>GET/POST /auth/accounts</td><td>Admin/Super Admin, filtered by manageable roles.</td></tr><tr><td>POST /auth/reset-password<br>POST /auth/delete-account</td><td>Admin/Super Admin with role boundary and re-authentication.</td></tr><tr><td>POST /auth/set-new-password</td><td>Authenticated temporary-password replacement.</td></tr><tr><td>GET /departments</td><td>Public template data for setup/account forms.</td></tr><tr><td>GET /departments/coverage</td><td>Coverage gaps: missing admin, File Management, reviewers/items.</td></tr><tr><td>POST /requests</td><td>File Management creates request and snapshot rows.</td></tr><tr><td>GET /requests<br>GET /requests/:id</td><td>Role-scoped listing/detail.</td></tr><tr><td>POST /requests/:id/sign</td><td>Standard reviewer sign-off plus evidence upload.</td></tr><tr><td>POST /requests/:id/items/:itemKey/sign</td><td>IT item sign-off plus evidence upload.</td></tr><tr><td>POST .../reopen</td><td>Authorized reviewer or File Management clears sign-off/evidence.</td></tr><tr><td>POST /requests/:id/approve</td><td>File Management evidence approval.</td></tr><tr><td>POST /requests/:id/revoke-access</td><td>IT final action; computes completed status.</td></tr><tr><td>GET /requests/:id/evidence/...</td><td>Permission-checked evidence streaming.</td></tr><tr><td>GET /requests/:id/pdf</td><td>Permission-checked generated clearance PDF.</td></tr></tbody></table>
+<h3>Write-route pattern</h3><ol><li>Authenticate and authorize role/department/item.</li><li>Fetch assembled plain request for business validation.</li><li>Re-authenticate current password for consequential actions.</li><li>Validate upload and transition prerequisites.</li><li>Update targeted Sequelize rows.</li><li>Re-fetch and call the shared status-sync logic.</li><li>Return only the role-appropriate projection.</li></ol></section>
+
+<section class="page"><h2>6. Frontend architecture</h2><p><span class="tag">App.jsx</span> defines public routes and four protected dashboards. <span class="tag">RequireRole</span> redirects unauthenticated users, forces temporary-password replacement, and prevents wrong-role rendering.</p>
+<div class="code">/login             Login.jsx
+/setup             FirstRunSetup.jsx
+/set-new-password  SetNewPassword.jsx
+/file-management   FileManagementDashboard.jsx
+/reviewer          ReviewerDashboard.jsx
+/admin             AdminDashboard.jsx
+/super-admin       AdminDashboard.jsx (reused with different role scope)</div>
+<img class="shot" src="assets/06-oversight-dashboard.png"><p class="caption">The actual reviewer UI illustrates shared tables, charts, localization, and role-driven presentation.</p>
+<h3>State and reusable components</h3><ul><li><span class="tag">AuthContext.jsx</span>: login state, persisted token/user, logout.</li><li><span class="tag">ThemeContext.jsx</span>: light/dark theme.</li><li><span class="tag">DepartmentDashboard.jsx</span>: common reviewer layout and analytics.</li><li><span class="tag">SignaturePanel.jsx</span>: password + evidence interaction.</li><li><span class="tag">EvidencePreview.jsx</span>: permission-backed image/PDF preview.</li><li><span class="tag">RequestOversightGrid.jsx</span>: full 13-department oversight.</li><li><span class="tag">SetupCoverageWarning.jsx</span>: missing staffing/configuration warnings.</li></ul>
+<h3>Localization rule</h3><p>Every new user-facing string belongs in both <span class="tag">frontend/src/locales/en.json</span> and <span class="tag">ar.json</span>. Test English and Arabic, including RTL alignment, long labels, tables, modals, and charts. Avoid embedding English strings directly in components.</p></section>
+
+<section class="page"><h2>7. Evidence and clearance PDFs</h2><p>Evidence is stored under <span class="tag">backend/uploads/&lt;requestId&gt;/</span>. The database stores URL, MIME type, and original name, while protected endpoints decide whether the current user can fetch the file.</p>
+<h3>Accepted uploads</h3><p>Reviewer sign routes use multer disk storage and accept JPG, PNG, WEBP, and PDF evidence. Validation must remain synchronized between frontend guidance, multer’s filter/limits, preview support, seed data, and PDF compositing.</p>
+<h3>Generation pipeline</h3><div class="flow"><span>Official PDF template</span><b>+</b><span>Employee/request data</span><b>+</b><span>Signature evidence</span><b>›</b><span>Composited PDF</span></div>
+<p><span class="tag">backend/src/services/clearancePdf.js</span> loads the official form, embeds Cairo fonts for Arabic and Latin text, processes evidence images/PDFs, places signatures in department-specific coordinates, and returns the generated bytes. Do not replace the form without verifying dimensions and every placement coordinate.</p>
+<div class="callout warning"><b>Evidence lifecycle:</b> reopening or deleting a request involves both database state and files on disk. Maintain consistency on failures. Back up the database and upload directory together; one without the other is not a restorable clearance record.</div>
+<h3>Security considerations</h3><ul><li>Do not expose <span class="tag">uploads/</span> as a public static directory.</li><li>Preserve path normalization and authorization before file access.</li><li>Do not trust original filenames for storage paths.</li><li>Validate MIME/type and size server-side.</li><li>Avoid logging passwords, JWTs, evidence bytes, or production database URLs.</li></ul></section>
+
+<section class="page"><h2>8. Safe change recipes</h2><h3>Add or rename a department</h3><ol><li>Edit <span class="tag">backend/src/seed/departments.data.js</span> with stable key, bilingual names, unique order, tier, oversight flag, and signature mode.</li><li>Update the official PDF template and placement mapping if form rows change.</li><li>Run the appropriate department seed/upsert.</li><li>Create coverage accounts through Admin; for IT, ensure each item has one owner.</li><li>Test a newly created request and confirm old requests retained their snapshots.</li><li>Update translations, demos, smoke tests, README/engineering notes, and these manuals.</li></ol>
+<div class="callout danger"><b>Do not change a department key casually.</b> It is a natural primary/foreign key and appears in users, snapshots, routes, demo accounts, and PDF mapping. Treat a key rename as a data migration.</div>
+<h3>Add a leaving reason</h3><ol><li>Add the stable enum value to <span class="tag">LEAVING_REASONS</span> in the model.</li><li>Add English/Arabic labels and any formatting helper mapping.</li><li>Exercise request creation, list display, analytics grouping, PDF output, and seed/test fixtures.</li><li>Back up before allowing Sequelize alter to modify the production enum.</li></ol>
+<h3>Add a database field</h3><ol><li>Decide whether it belongs to live configuration, the request snapshot, or both.</li><li>Add model validation and explicit API input validation.</li><li>Update assembly/projection/redaction logic so it cannot leak to unauthorized roles.</li><li>Update create/write routes, frontend form/display, both locales, PDF output if applicable, tests, and documentation.</li><li>Test schema alteration on a production-like copy before deployment.</li></ol>
+<h3>Add a role or permission</h3><p>Update the PostgreSQL enum, login token payload, middleware, route guards, data projections, dashboard routing, account-management hierarchy, coverage checks, translations, tests, and documentation. Begin with server-side authorization; UI visibility comes afterward.</p></section>
+
+<section class="page"><h2>Changing or removing data safely</h2><h3>Preferred paths</h3><table><thead><tr><th>Need</th><th>Preferred method</th><th>Avoid</th></tr></thead><tbody><tr><td>Create/reset/delete a user</td><td>Admin/Super Admin UI or authenticated API.</td><td>Direct SQL that bypasses hashing, role rules, or audit intent.</td></tr><tr><td>Change department templates</td><td>Edit source-of-truth data and run the idempotent upsert.</td><td>Editing historical request snapshot rows globally.</td></tr><tr><td>Delete a clearance request</td><td>Authorized File Management action on a completed request, which handles DB and upload directory.</td><td>Deleting only the database row or only upload files.</td></tr><tr><td>Correct evidence</td><td>Reopen the department/item, then re-sign.</td><td>Replacing a file directly on disk.</td></tr><tr><td>Correct historical production data</td><td>Approved, backed-up, transaction-wrapped migration with verification.</td><td>Ad hoc SQL in a live shell.</td></tr></tbody></table>
+<h3>Transaction pattern for a one-off migration</h3><div class="code">BEGIN;
+-- Identify exact rows first; preserve a query/result record.
+SELECT ... FOR UPDATE;
+
+-- Apply the smallest explicit update.
+UPDATE ... WHERE ...;
+
+-- Verify row count and invariants before commit.
+SELECT ...;
+COMMIT;  -- or ROLLBACK on any uncertainty</div>
+<p>Use a maintenance window for material changes. Take a tested backup, record affected primary keys and expected counts, and keep rollback steps. Never edit <span class="tag">passwordHash</span> manually; use application reset flows.</p></section>
+
+<section class="page"><h2>9. Deployment, testing, and recovery</h2><h3>Release checklist</h3><ul class="checklist"><li>Review <span class="tag">git diff</span>; exclude secrets, uploads, temporary screenshots, and unrelated changes.</li><li>Back up PostgreSQL and <span class="tag">backend/uploads</span> together.</li><li>Install dependencies from lockfiles with a supported Node version.</li><li>Build the frontend successfully.</li><li>Apply/verify schema change on a staging or restored copy.</li><li>Run the smoke test against a seeded non-production database.</li><li>Verify Arabic and English role dashboards.</li><li>Verify login, sign, reopen, approve, evidence preview, PDF, and access removal.</li><li>Deploy and check <span class="tag">GET /api/health</span>.</li><li>Confirm required coverage (Admin, File Management, departments, IT items).</li></ul>
+<h3>Testing commands</h3><div class="code"># terminal 1
+npm run dev
+
+# terminal 2 — uses a running, seeded server
+node backend/scripts/smoke-test.js
+
+# frontend compilation
+npm run build --prefix frontend
+
+# optional load exercise; review the script before running
+node backend/scripts/stress-test.js</div>
+<p>The smoke test creates throwaway accounts and requests and exercises role boundaries and the end-to-end transition. Never aim destructive or load-oriented scripts at production without explicit review.</p>
+<h3>Backup unit and restore test</h3><p>A complete backup consists of the PostgreSQL database, upload directory, deployed code revision, official PDF template, and environment/configuration kept in an approved secrets system. Restore into an isolated environment and verify evidence preview and PDF generation—not just row counts.</p></section>
+
+<section class="page"><h2>10. Risks and maintainer checklist</h2><table><thead><tr><th>Risk</th><th>Why it matters</th><th>Mitigation</th></tr></thead><tbody><tr><td>Sole Super Admin lockout</td><td>No other role can reset it.</td><td>Secure credential escrow and tested organizational recovery procedure.</td></tr><tr><td>Automatic schema alteration</td><td><span class="tag">sync({alter:true})</span> can make production changes at startup.</td><td>Backups, staging rehearsal, controlled Node/Sequelize versions; consider formal migrations.</td></tr><tr><td>Filesystem evidence</td><td>DB-only backup is incomplete; horizontal scaling needs shared storage.</td><td>Joint backups; persistent protected volume; consider object storage if scaling.</td></tr><tr><td>JWT in localStorage</td><td>XSS would expose session tokens.</td><td>Strong CSP/input hygiene; avoid unsafe HTML; consider secure HttpOnly cookies in a future security hardening project.</td></tr><tr><td>Public contact/setup endpoints</td><td>Intentional unauthenticated surface.</td><td>Keep returned fields minimal; setup must re-check zero users atomically.</td></tr><tr><td>Documentation drift</td><td>Fast-changing rules can make procedures unsafe.</td><td>Update README, CLAUDE.md, PROJECT_STATUS, tests, and manuals in the same change.</td></tr></tbody></table>
+<h3>Definition of done for a change</h3><ul class="checklist"><li>Business invariant and authorization impact are explicit.</li><li>Backend validation and data redaction are tested.</li><li>Existing in-flight request snapshots remain valid.</li><li>Both languages and RTL are correct.</li><li>Evidence/PDF implications are verified.</li><li>Build and smoke test pass.</li><li>Deployment and rollback steps exist.</li><li>Documentation is updated.</li></ul>
+<div class="callout success"><b>Core architectural principle:</b> preserve historical request snapshots and enforce every permission on the server. UI controls, documentation, and database discipline support those two invariants; they do not replace them.</div>
+<p class="footer-note">Verified against repository and local application state on 16 August 2026. Review the latest source and project status before applying production changes.</p></section>
+</body></html>
