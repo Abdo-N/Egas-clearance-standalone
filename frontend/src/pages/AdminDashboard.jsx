@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import toast from "react-hot-toast";
 import client from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import TopBarControls from "../components/TopBarControls";
@@ -217,14 +218,13 @@ function CreateAccountForm({ departments, manageableRoles, onCreate, t, isAr }) 
   );
 }
 
-function AccountRow({ account, currentUserID, departmentsByKey, isAr, onReset, onDelete, t }) {
-  const isSelf = account.userID.toLowerCase() === currentUserID.toLowerCase();
+function AccountRow({ account, departmentsByKey, isAr, onReset, onDelete, t }) {
   const department = account.departmentKey ? departmentsByKey.get(account.departmentKey) : null;
   const departmentDisplay = department ? (isAr ? department.name_ar : department.name_en) : "—";
 
   return (
     <tr>
-      <td>{account.fullName_ar || account.fullName} {isSelf && <small>{t("admin.you")}</small>}</td>
+      <td>{account.fullName_ar || account.fullName}</td>
       <td>{account.userID}</td>
       <td>{roleLabel(account, t)}</td>
       <td>{departmentDisplay}</td>
@@ -285,6 +285,7 @@ export default function AdminDashboard() {
   async function handleCreate(payload) {
     const { data } = await client.post("/auth/accounts", payload);
     await reload();
+    toast.success(t("admin.createSuccessToast", { name: data.fullName }));
     return data;
   }
 
@@ -294,6 +295,7 @@ export default function AdminDashboard() {
       setLastReset(data);
       setCopied(false);
       await reload();
+      toast.success(t("admin.resetPasswordSuccessToast", { name: data.fullName }));
     } catch (err) {
       throw new Error(err.response?.data?.error || t("admin.resetPasswordError"));
     }
@@ -305,6 +307,7 @@ export default function AdminDashboard() {
     } catch (err) {
       throw new Error(err.response?.data?.error || t("admin.deleteError"));
     }
+    toast.success(t("admin.deleteSuccessToast"));
     if (account.userID.toLowerCase() === user.userID.toLowerCase()) {
       logout();
       return;
@@ -415,7 +418,6 @@ export default function AdminDashboard() {
                         <AccountRow
                           key={account.userID}
                           account={account}
-                          currentUserID={user.userID}
                           departmentsByKey={departmentsByKey}
                           isAr={isAr}
                           onReset={handleReset}

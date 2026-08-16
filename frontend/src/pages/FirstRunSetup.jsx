@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
 import client from "../api/client";
 import LanguageToggle from "../components/LanguageToggle";
@@ -64,6 +65,7 @@ export default function FirstRunSetup() {
     setLoading(true);
     try {
       const user = await completeSetup({ email, password, fullName, landlineNumber });
+      toast.success(t("firstRunSetup.successToast"));
       navigate(dashboardPathFor(user.role));
     } catch (err) {
       setError(err.response?.data?.error || t("firstRunSetup.error"));
@@ -120,7 +122,10 @@ export default function FirstRunSetup() {
           <img src={logoUrl} alt="EGAS" style={{ width: "64px", height: "64px", objectFit: "contain" }} />
         </div>
 
-        <h2 style={{ margin: "0 0 5px 0", fontSize: "22px", color: "#111", fontWeight: "600" }}>
+        <h1 style={{ margin: "0", fontSize: "24px", color: "#111", fontWeight: "700", textAlign: "center" }}>
+          {t("firstRunSetup.greeting")}
+        </h1>
+        <h2 style={{ margin: "4px 0 10px 0", fontSize: "15px", color: "#333", fontWeight: "600", textAlign: "center" }}>
           {t("firstRunSetup.title")}
         </h2>
         <p style={{ margin: "0 0 20px 0", fontSize: "12px", color: "#666", textAlign: "center" }}>

@@ -2076,11 +2076,6 @@ p {
   color: var(--ink-700);
 }
 
-.employee-lookup-message.success {
-  color: var(--green-700);
-  font-weight: 600;
-}
-
 /* ---------- Signature upload + thumbnail ---------- */
 
 .upload-group {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import toast from "react-hot-toast";
 import client from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import TopBarControls from "../components/TopBarControls";
@@ -101,7 +102,6 @@ export default function FileManagementDashboard() {
   const [lastWorkingDay, setLastWorkingDay] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [submitSuccess, setSubmitSuccess] = useState("");
 
   async function loadRequests() {
     const { data } = await client.get("/requests", { params: { q: employeeSearch } });
@@ -127,7 +127,6 @@ export default function FileManagementDashboard() {
   async function handleSubmit(e) {
     e.preventDefault();
     setSubmitError("");
-    setSubmitSuccess("");
     setSubmitting(true);
     try {
       await client.post("/requests", {
@@ -139,7 +138,7 @@ export default function FileManagementDashboard() {
         reason,
         lastWorkingDay,
       });
-      setSubmitSuccess(t("fileManagement.submitButton"));
+      toast.success(t("fileManagement.submitSuccessToast"));
       setEmployeeFullName("");
       setEmployeeNumber("");
       setEmployeeJobTitle("");
@@ -163,7 +162,7 @@ export default function FileManagementDashboard() {
       const url = URL.createObjectURL(data);
       window.open(url, "_blank");
     } catch {
-      alert(t("fileManagement.pdfError"));
+      toast.error(t("fileManagement.pdfError"));
     } finally {
       setDownloadingId(null);
     }
@@ -173,6 +172,7 @@ export default function FileManagementDashboard() {
     try {
       await client.post(`/requests/${requestId}/departments/${deptKey}/reopen`, { password });
       await loadRequests();
+      toast.success(t("fileManagement.reopenSuccessToast"));
     } catch (err) {
       throw new Error(err.response?.data?.error || t("fileManagement.reopenError"));
     }
@@ -182,6 +182,7 @@ export default function FileManagementDashboard() {
     try {
       await client.post(`/requests/${requestId}/departments/${deptKey}/items/${itemKey}/reopen`, { password });
       await loadRequests();
+      toast.success(t("fileManagement.reopenSuccessToast"));
     } catch (err) {
       throw new Error(err.response?.data?.error || t("fileManagement.reopenError"));
     }
@@ -191,19 +192,23 @@ export default function FileManagementDashboard() {
     try {
       await client.post(`/requests/${requestId}/approve-clearance`, { password });
       await loadRequests();
+      toast.success(t("fileManagement.approveSuccessToast"));
     } catch (err) {
       throw new Error(err.response?.data?.error || t("fileManagement.approveError"));
     }
   }
 
   // Permanent, unrecoverable -- e.g. the employee came back to the company
-  // after already being cleared. Available at any stage, not just once
-  // completed (also useful for cancelling a request filed by mistake).
+  // after already being cleared. Only reachable once the request is fully
+  // completed (see the `selected.status === "completed"` gate below and
+  // POST /:id/delete in request.routes.js) -- reverts a finalized clearance,
+  // not a general "cancel any request" tool.
   async function handleDelete(requestId, password) {
     try {
       await client.post(`/requests/${requestId}/delete`, { password });
       setExpandedId(null);
       await loadRequests();
+      toast.success(t("fileManagement.deleteSuccessToast"));
     } catch (err) {
       throw new Error(err.response?.data?.error || t("fileManagement.deleteError"));
     }
@@ -364,7 +369,6 @@ export default function FileManagementDashboard() {
               </div>
 
               {submitError && <p className="form-error">{submitError}</p>}
-              {submitSuccess && <p className="employee-lookup-message success">{submitSuccess}</p>}
 
               <button
                 type="submit"

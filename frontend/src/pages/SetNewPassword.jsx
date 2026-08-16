@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
 import LanguageToggle from "../components/LanguageToggle";
 import PasswordInput from "../components/PasswordInput";
@@ -16,10 +17,10 @@ function isPasswordStrongEnough(password) {
   return password.length >= PASSWORD_MIN_LENGTH && PASSWORD_SYMBOL_PATTERN.test(password);
 }
 
-// Landing screen for a login that used a one-time password IT issued (see
-// POST /auth/reset-password) -- the backend refuses every other route until
-// this succeeds (requireAuth in auth.middleware.js), so this page has no
-// "skip for now" option.
+// Landing screen for a login that used a one-time password an
+// admin/super_admin issued (see POST /auth/reset-password) -- the backend
+// refuses every other route until this succeeds (requireAuth in
+// auth.middleware.js), so this page has no "skip for now" option.
 export default function SetNewPassword() {
   const { t } = useTranslation();
   const { user, setNewPassword } = useAuth();
@@ -52,6 +53,7 @@ export default function SetNewPassword() {
     setLoading(true);
     try {
       const updated = await setNewPassword(currentPassword, newPasswordValue);
+      toast.success(t("setNewPassword.successToast"));
       navigate(dashboardPathFor(updated.role));
     } catch (err) {
       setError(err.response?.data?.error || t("setNewPassword.error"));

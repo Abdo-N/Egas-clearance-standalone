@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
 import { dashboardPathFor } from "../utils/dashboardPath";
 import client from "../api/client";
@@ -84,6 +85,8 @@ export default function Login() {
       if (user.mustResetPassword) {
         navigate("/set-new-password");
       } else {
+        const displayName = isArabic ? user.fullName_ar || user.fullName : user.fullName;
+        toast.success(t("login.successToast", { name: displayName }));
         navigate(dashboardPathFor(user.role));
       }
     } catch (err) {

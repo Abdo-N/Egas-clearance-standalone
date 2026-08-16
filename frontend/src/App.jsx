@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { Toaster } from "react-hot-toast";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import Login from "./pages/Login";
@@ -31,6 +32,30 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
+        <Toaster
+          position="top-center"
+          gutter={10}
+          toastOptions={{
+            duration: 3200,
+            style: {
+              background: "var(--card)",
+              color: "var(--ink-900)",
+              border: "1px solid var(--line)",
+              borderRadius: "var(--radius-md)",
+              boxShadow: "var(--shadow-card)",
+              fontFamily: "inherit",
+              fontSize: "14px",
+              padding: "12px 16px",
+            },
+            success: {
+              iconTheme: { primary: "var(--green-700)", secondary: "var(--card)" },
+            },
+            error: {
+              duration: 4500,
+              iconTheme: { primary: "var(--rose-600)", secondary: "var(--card)" },
+            },
+          }}
+        />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/setup" element={<FirstRunSetup />} />

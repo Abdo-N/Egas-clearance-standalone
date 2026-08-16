@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import toast from "react-hot-toast";
 import client from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import TopBarControls from "../components/TopBarControls";
@@ -187,8 +188,9 @@ export default function ReviewerDashboard() {
         : `/requests/${selected._id}/departments/${myDept.departmentKey}/sign`;
       await client.post(url, form);
       await reload(selected._id);
+      toast.success(t("signature.successToast"));
     } catch (err) {
-      alert(err.response?.data?.error || t("signature.error"));
+      toast.error(err.response?.data?.error || t("signature.error"));
     } finally {
       setSigning(false);
     }
@@ -208,6 +210,7 @@ export default function ReviewerDashboard() {
         : `/requests/${selected._id}/departments/${myDept.departmentKey}/reopen`;
       await client.post(url, { password });
       await reload(selected._id);
+      toast.success(t("reviewer.undoSuccessToast"));
     } catch (err) {
       throw new Error(err.response?.data?.error || t("signature.error"));
     } finally {
@@ -221,8 +224,9 @@ export default function ReviewerDashboard() {
     try {
       await client.post(`/requests/${selected._id}/revoke-access`, { password });
       await reload(selected._id);
+      toast.success(t("reviewer.revokeAccessSuccessToast"));
     } catch (err) {
-      alert(err.response?.data?.error || t("signature.error"));
+      toast.error(err.response?.data?.error || t("signature.error"));
     } finally {
       setArchiving(false);
     }

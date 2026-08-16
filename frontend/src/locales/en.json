@@ -8,6 +8,7 @@
     "submit": "Sign in",
     "error": "Invalid email or password",
     "welcome": "Welcome back,",
+    "successToast": "Welcome back, {{name}}",
     "forgotPassword": {
       "toggle": "Forgot your password?",
       "hint": "Contact any admin below and ask for a one-time password.",
@@ -26,7 +27,8 @@
     }
   },
   "firstRunSetup": {
-    "title": "Welcome — set up the super admin account",
+    "greeting": "Welcome",
+    "title": "Set up the super admin account",
     "subtitle": "This is a brand-new installation with no accounts yet. Create the super admin account below to get started -- you'll be able to create admin accounts from there, and each admin can then create department and file management accounts.",
     "fullNameLabel": "Full name",
     "landlineNumberLabel": "Landline number",
@@ -34,7 +36,8 @@
     "passwordLabel": "Password",
     "submit": "Create super admin account",
     "submitting": "Creating...",
-    "error": "Failed to create the super admin account"
+    "error": "Failed to create the super admin account",
+    "successToast": "Super admin account created — welcome aboard"
   },
   "passwordRules": {
     "hint": "At least 12 characters, including a symbol",
@@ -66,7 +69,6 @@
     "createdTitle": "Account created",
     "createdHint": "{{name}}'s account has been created.",
     "dismiss": "Done",
-    "you": "(you)",
     "accountsTitle": "All accounts",
     "accountsEmpty": "No accounts yet.",
     "colName": "Name",
@@ -87,7 +89,10 @@
     "resetPasswordCopied": "Copied",
     "deleteButton": "Delete account",
     "deleteError": "Failed to delete that account. Check your password and try again.",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "createSuccessToast": "Account created for {{name}}",
+    "resetPasswordSuccessToast": "One-time password generated for {{name}}",
+    "deleteSuccessToast": "Account deleted"
   },
   "setupWarning": {
     "title": "Setup incomplete",
@@ -100,7 +105,8 @@
     "newPasswordLabel": "New password",
     "submit": "Set password and continue",
     "submitting": "Saving...",
-    "error": "Failed to set a new password. Check the one-time password and try again."
+    "error": "Failed to set a new password. Check the one-time password and try again.",
+    "successToast": "Password updated — welcome back"
   },
   "nav": {
     "logout": "Log out"
@@ -163,10 +169,12 @@
     "confirmUndo": "Confirm undo",
     "undoing": "Undoing...",
     "undoError": "Failed to undo. Check your password and try again.",
+    "undoSuccessToast": "Signature undone",
     "cancel": "Cancel",
     "revokeAccessHint": "Every department has signed. Re-enter your password to confirm deleting this employee from Active Directory.",
     "revokeAccessButton": "Delete from Active Directory",
     "archiving": "Deleting...",
+    "revokeAccessSuccessToast": "Employee deleted from Active Directory",
     "accessRevokedBanner": "This employee has been deleted from Active Directory.",
     "awaitingAdRemovalBadge": "Awaiting Active Directory removal",
     "accessRevokedBadgeIt": "Deleted from Active Directory",
@@ -204,13 +212,15 @@
     "notesPlaceholder": "Any remark to print on the clearance form...",
     "signButton": "Sign",
     "signing": "Signing...",
-    "error": "Failed to sign. Check your password and try again."
+    "error": "Failed to sign. Check your password and try again.",
+    "successToast": "Signed successfully"
   },
   "fileManagement": {
     "title": "Document and Records Management",
     "newRequestTitle": "File a new clearance request",
     "submitButton": "File request",
     "submitError": "Failed to file the request. Please check the details and try again.",
+    "submitSuccessToast": "Clearance request filed successfully",
     "myRequestsTitle": "Clearance requests",
     "empty": "No clearance requests yet.",
     "viewDetails": "View details",
@@ -222,10 +232,12 @@
     "reopening": "Reopening...",
     "confirmReopen": "Confirm reopen",
     "reopenError": "Failed to reopen. Check your password and try again.",
+    "reopenSuccessToast": "Reopened for signature again",
     "approveButton": "Approve clearance",
     "approveHint": "Every department has signed. Review the signed form above -- if anything looks unclear, reopen that department first. Otherwise, re-enter your password to approve.",
     "approving": "Approving...",
     "approveError": "Failed to approve. Check your password and try again.",
+    "approveSuccessToast": "Clearance approved",
     "approvedNote": "Approved -- waiting for the IT department to revoke this employee's system access.",
     "employeeNumberLabel": "Employee number",
     "fullNameLabel": "Full name",
@@ -237,6 +249,7 @@
     "confirmDelete": "Confirm permanent delete",
     "deleting": "Deleting...",
     "deleteError": "Failed to delete. Check your password and try again.",
+    "deleteSuccessToast": "Request permanently deleted",
     "cancel": "Cancel"
   },
   "common": {
