@@ -642,6 +642,16 @@ every File Management/reviewer account from `/admin` in turn. `npm run
 seed:local`/root `npm run dev:local` spin up a throwaway local PostgreSQL
 via Docker (`egas-postgres` container) for offline dev.
 
+`npm run seed:final:reset-users` (`node src/seed/seedDepartments.js
+--reset-users`) is the same department upsert, plus wiping every row out of
+`users` first. It's local/dev-only, to force the first-run setup flow back
+up on a database that already has accounts, without dropping the whole DB —
+deliberately NOT what plain `npm run seed:final` does, since that command is
+documented above as safe to rerun against a real deployment; unconditionally
+deleting accounts there would mean rerunning it later against a live
+instance (e.g. to pick up a department-data tweak) wipes out every real
+admin/reviewer account that exists by then.
+
 **Deployment target (decided 2026-08-10):** a company-controlled Windows
 Server running a local PostgreSQL instance (MongoDB through 2026-08-11, see
 "Data layer" above) — `DATABASE_URL` in `.env` needs to point at that local

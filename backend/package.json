@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "seed:dev": "node src/seed/seed.js",
     "seed:final": "node src/seed/seedDepartments.js",
+    "seed:final:reset-users": "node src/seed/seedDepartments.js --reset-users",
     "seed:local": "(docker start egas-postgres 2>/dev/null || docker run -d --name egas-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres -v egas-postgres-data:/var/lib/postgresql/data postgres:16) && DATABASE_URL=postgres://postgres:postgres@localhost:5432/egas_clearance node src/seed/seed.js"
   },
   "dependencies": {
