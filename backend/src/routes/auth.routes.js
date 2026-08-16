@@ -425,7 +425,8 @@ router.post("/delete-account", requireAuth, requireRole("admin", "super_admin"),
 }));
 
 /**
- * Set a real password after logging in with a one-time password IT issued.
+ * Set a real password after logging in with a one-time password an
+ * admin/super_admin issued.
  * The only route a `mustResetPassword` token is allowed to hit (see
  * requireAuth in auth.middleware.js) -- still re-authenticates with the
  * one-time password itself (`currentPassword`) before accepting the new one,

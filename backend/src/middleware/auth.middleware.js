@@ -8,11 +8,12 @@ async function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    // A one-time password issued by IT (see POST /auth/reset-password) only
-    // ever unlocks one route -- setting a real password -- so a token minted
-    // right after that login can't be used for anything else in the
-    // meantime. Checked here, not just in the frontend, since the frontend
-    // check is cosmetic everywhere else in this app too.
+    // A one-time password issued by an admin/super_admin (see
+    // POST /auth/reset-password) only ever unlocks one route -- setting a
+    // real password -- so a token minted right after that login can't be
+    // used for anything else in the meantime. Checked here, not just in the
+    // frontend, since the frontend check is cosmetic everywhere else in this
+    // app too.
     if (payload.mustResetPassword && req.path !== "/set-new-password") {
       return res.status(403).json({ error: "You must set a new password before continuing", code: "PASSWORD_RESET_REQUIRED" });
     }
