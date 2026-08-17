@@ -13,6 +13,7 @@ export function AuthProvider({ children }) {
     const { data } = await client.post("/auth/login", { email, password });
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
+    localStorage.setItem("setupComplete", "true");
     setUser(data.user);
     return data.user;
   }
@@ -26,6 +27,7 @@ export function AuthProvider({ children }) {
     const { data } = await client.post("/auth/setup", payload);
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
+    localStorage.setItem("setupComplete", "true");
     setUser(data.user);
     return data.user;
   }

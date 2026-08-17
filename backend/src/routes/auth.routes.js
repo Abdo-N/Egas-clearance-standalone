@@ -64,8 +64,15 @@ router.post("/login", asyncHandler(async (req, res) => {
  * (`seed:final` auto-creating a bootstrap admin with a fixed default
  * password) with an in-browser first-run flow instead, so there's no
  * well-known default credential pair sitting in the codebase/docs.
+ *
+ * Explicitly uncacheable: this flips from true to false exactly once, ever,
+ * in a deployment's lifetime, and a stale cached `true` (browser HTTP cache
+ * or a reverse proxy/CDN in front of the app) would permanently strand the
+ * frontend on /setup even after the real account exists -- unlike GET
+ * requests generally, this one's answer is only valid for an instant.
  */
 router.get("/setup-status", asyncHandler(async (req, res) => {
+  res.set("Cache-Control", "no-store");
   const accountCount = await User.count();
   res.json({ needsSetup: accountCount === 0 });
 }));

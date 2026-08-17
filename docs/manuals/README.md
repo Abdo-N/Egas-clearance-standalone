@@ -10,5 +10,3 @@ Current bilingual documentation, verified against the application on 16 August 2
 | Developer / maintainer | `EGAS-Developer-Documentation.pdf` | `EGAS-Arabic-Developer-Documentation.pdf` | `technical-documentation.html`, `technical-documentation-ar.html` |
 
 The operational employee guide covers Document and Records Management and all department reviewers, including IT, Wages, and Financial Affairs. The employee being cleared does not log in to this system.
-
-The older combined-role PDFs remain in this directory as historical artifacts; use the files listed above for the current workflow.

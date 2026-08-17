@@ -41,11 +41,25 @@ export default function Login() {
   // Rendered as null (not the login form) until this resolves, so there's
   // no flash of a login screen right before bouncing away from it.
   useEffect(() => {
+    // Once any browser has actually seen a real login/setup succeed, that's
+    // stronger proof accounts exist than any future GET here can ever be --
+    // skip asking the server again. This also sidesteps a stale/cached
+    // "needsSetup: true" response (e.g. from a proxy in front of the app)
+    // permanently stranding this browser on /setup after the real account
+    // already exists elsewhere.
+    if (localStorage.getItem("setupComplete") === "true") {
+      setCheckingSetup(false);
+      return;
+    }
     client
       .get("/auth/setup-status")
       .then(({ data }) => {
-        if (data.needsSetup) navigate("/setup", { replace: true });
-        else setCheckingSetup(false);
+        if (data.needsSetup) {
+          navigate("/setup", { replace: true });
+        } else {
+          localStorage.setItem("setupComplete", "true");
+          setCheckingSetup(false);
+        }
       })
       .catch(() => setCheckingSetup(false));
   }, [navigate]);
