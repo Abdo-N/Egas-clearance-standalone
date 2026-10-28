@@ -22,14 +22,14 @@ with role-based dashboards and server-enforced visibility rules.
 - Parallel tier-1 review followed by gated Wages and Finance review.
 - Password re-authentication before every signature, reopen, approval, or
   access-revocation action.
-- JPG, PNG, WEBP, and PDF signature/stamp evidence uploads.
+- JPG, PNG, and PDF signature/stamp evidence uploads.
 - Inline evidence previews with permission checks enforced by the backend.
 - Itemized IT clearance with five separately owned checklist items.
 - File Management evidence review, reopen controls, and final approval.
 - Composited clearance PDF generated from the official form template.
 - Reviewer and File Management analytics for workload, completion, reasons,
   monthly trends, employee departments, and recent activity.
-- Deterministic demo accounts and two fully populated demo requests.
+- Deterministic demo accounts and five fully populated demo requests.
 - A login-page demo account picker that fills credentials automatically.
 
 ## Roles and visibility
@@ -70,7 +70,8 @@ deployment (zero accounts in the database), which creates a super admin.
 2. **File Management creates the request**
    - File Management enters the employee's name, employee number, job title,
      department, leaving reason, and last working day.
-   - Leaving reasons are resignation, moving to a new job, or retirement.
+   - Supported leaving reasons include retirement, resignation, early retirement,
+     dismissal, contract expiration, and sister-company transfer (13 distinct reasons configured).
    - The employee data and current 13-department configuration are snapshotted
      into the request. There is no separate employee directory.
 
@@ -163,8 +164,8 @@ snapshot so later template changes do not alter requests already in progress.
 ### Installation
 
 ```bash
-git clone https://github.com/Abdo-N/Egas-clearance.git
-cd Egas-clearance
+git clone https://github.com/Abdo-N/Egas-clearance-standalone.git
+cd Egas-clearance-standalone
 
 npm install
 npm install --prefix backend
@@ -187,6 +188,8 @@ Seed the reference data, demo accounts, signatures, and demo requests:
 ```bash
 npm run seed:dev --prefix backend
 ```
+
+> **Tip:** If running PostgreSQL via Docker, you can run `npm run dev:local` from the root directory to automatically launch the `egas-postgres` container and start both frontend and backend servers together.
 
 For a real deployment with no demo data, use `npm run seed:final --prefix backend`
 instead — it upserts only the 13 real departments.
@@ -228,15 +231,18 @@ Examples of non-IT reviewer emails are `security@demo.local`,
 `backend/src/seed/demo-users.data.js` and is mirrored by
 `frontend/src/demoAccounts.js` for the login-page picker.
 
-The seed creates two requests using evidence from `frontend/src/assets`:
+The seed creates five requests using evidence from `frontend/src/assets`:
 
-| Employee number | State |
-|---|---|
-| `DEMO-1001` | Fully signed, File Management approved, access revoked, and completed |
-| `DEMO-1002` | Fully signed and approved; waiting only for IT to revoke access |
+| Employee number | State | Description |
+|---|---|---|
+| `DEMO-1001` | Completed | Fully signed, File Management approved, access revoked, and completed |
+| `DEMO-1002` | In progress | Fully signed and approved; waiting only for IT to revoke access |
+| `DEMO-1003` | Completed | Demonstrates Wages & Entitlements deduction notes box on form and PDF |
+| `DEMO-1004` | Completed | Demonstrates Financial Affairs clearance audit notes box on form and PDF |
+| `DEMO-1005` | Completed | Demonstrates both Wages and Financial Affairs notes boxes on form and PDF |
 
 The seed is idempotent. It upserts the 13 departments and 20 demo accounts,
-then replaces only the two fixed demo requests and their evidence directories.
+then replaces the five fixed demo requests and their evidence directories.
 Unrelated users and requests are preserved.
 
 ## Dashboards
@@ -244,8 +250,8 @@ Unrelated users and requests are preserved.
 ### File Management
 
 - **Create request:** manually enter employee and departure information.
-- **Requests I have filed:** review status, evidence, approval readiness, and
-  final completion for requests created by the logged-in account.
+- **Shared clearance queue:** review status, evidence, approval readiness, and
+  final completion for all requests in progress.
 - **Analytics:** view request totals, status distribution, reasons, monthly
   trends, employee-department distribution, and recent activity.
 - Preview or download the composited clearance PDF after all departments sign.
@@ -257,6 +263,17 @@ Unrelated users and requests are preserved.
 - Evidence preview and self-service undo/reopen before final completion.
 - IT-specific checklist analytics and final access-revocation control.
 - Wages and Finance company-wide oversight charts and full request details.
+
+### Admin
+
+- **Account provisioning (`/admin`):** create and list File Management and department reviewer accounts.
+- **Credential management:** issue one-time passwords for locked-out reviewers or File Management accounts, and permanently delete accounts within the admin's scope.
+- IT reviewer accounts are provisioned with an unclaimed checklist item.
+
+### Super Admin
+
+- **Admin management (`/super-admin`):** create and list admin accounts.
+- **Root credential management:** issue one-time passwords for locked-out admin accounts and permanently delete admin accounts. There is strictly one super admin per deployment.
 
 ## Evidence and generated PDFs
 
@@ -272,7 +289,6 @@ from Git. Evidence metadata is stored on the clearance request.
 - The first two parts of the signer's account name are drawn in the matching
   paper-form name cell so long names remain readable; the full name remains
   stored on the request for auditing.
-- WEBP uploads remain viewable but are not currently composited into the PDF.
 
 ## API overview
 
@@ -287,17 +303,21 @@ All routes are prefixed with `/api`.
 | `GET /auth/accounts` | Admin: list File Management/reviewer accounts. Super admin: list admin accounts |
 | `POST /auth/accounts` | Admin: create a File Management or reviewer account. Super admin: create an admin account (only one super admin can ever exist) |
 | `POST /auth/reset-password` | Admin/super admin: issue a one-time password, scoped to the accounts they manage (IT has no special access here) |
+| `POST /auth/set-new-password` | Target user sets their permanent password after logging in with a temporary one-time password |
 | `POST /auth/delete-account` | Admin/super admin: permanently delete an account, scoped to the accounts they manage (IT has no special access here) |
 | `GET /auth/it-contacts` / `GET /auth/admin-contacts` | Public: IT/admin/super-admin contact info. Admin contacts are who a locked-out user should actually reach for a password reset |
-| `GET /departments` | Public department/reference data used by dashboards and the admin/super-admin account-creation forms |
+| `GET /departments` | Public department/reference data used by dashboards and account-creation forms |
+| `GET /departments/coverage` | Public: whether all 13 departments and 5 IT items have registered reviewer accounts |
 | `POST /requests` | File Management creates a clearance request |
 | `GET /requests` | Role-filtered request list |
 | `GET /requests/:id` | Role-filtered request detail |
 | `POST /requests/:id/departments/:deptKey/sign` | Sign a single-mode department |
 | `POST /requests/:id/departments/:deptKey/items/:itemKey/sign` | Sign an IT checklist item |
-| `POST .../reopen` | Reopen a signed department or IT item |
+| `POST /requests/:id/departments/:deptKey/reopen` | Reopen a signed single-mode department (File Management or assigned reviewer) |
+| `POST /requests/:id/departments/:deptKey/items/:itemKey/reopen` | Reopen a signed IT item (File Management or assigned IT reviewer) |
 | `POST /requests/:id/approve-clearance` | File Management approves all evidence |
 | `POST /requests/:id/revoke-access` | IT performs the final access-revocation step |
+| `POST /requests/:id/delete` | File Management permanently deletes a completed request and its uploaded evidence directory |
 | `GET /requests/:id/evidence/:deptKey/:itemKey?` | Fetch authorized evidence |
 | `GET /requests/:id/pdf` | Generate the composited clearance PDF |
 
@@ -306,21 +326,30 @@ Protected routes require `Authorization: Bearer <jwt>`.
 ## Development commands
 
 ```bash
-# Run both development servers
+# Run both development servers (local PostgreSQL)
 npm run dev
+
+# Run both development servers with Dockerized PostgreSQL automatically
+npm run dev:local
 
 # Run only one side
 npm run dev --prefix backend
 npm run dev --prefix frontend
 
-# Build the frontend
+# Build the frontend production bundle
 npm run build --prefix frontend
 
-# Reapply the deterministic demo seed
+# Reapply the deterministic demo seed (upserts departments/demo users + 5 demo requests)
 npm run seed:dev --prefix backend
 
-# Seed only the real departments (no demo data) -- for real deployments
+# Seed with Docker PostgreSQL automatically
+npm run seed:local --prefix backend
+
+# Seed only the 13 real departments (no demo accounts or requests) -- for production/staging
 npm run seed:final --prefix backend
+
+# Reset all user accounts and re-trigger first-run setup flow locally
+npm run seed:final:reset-users --prefix backend
 
 # Optional destructive/manual workflow test against a running seeded server
 node backend/scripts/smoke-test.js
@@ -328,16 +357,16 @@ node backend/scripts/smoke-test.js
 
 The smoke test creates uniquely named throwaway accounts, a completed request,
 and uploaded evidence in the configured development database. Rerun the seed if
-you want to restore the two canonical demo requests afterward; unrelated smoke
+you want to restore the five canonical demo requests afterward; unrelated smoke
 records are intentionally not deleted automatically.
 
 ## Project structure
 
 ```text
-Egas-clearance/
+Egas-clearance-standalone/
 ├── backend/
 │   ├── assets/                 Clearance form template and demo signatures
-│   ├── scripts/smoke-test.js   Manual end-to-end workflow test
+│   ├── scripts/                smoke-test.js and stress-test.js
 │   ├── src/
 │   │   ├── config/             Sequelize/PostgreSQL connection
 │   │   ├── middleware/         JWT and role/department guards
@@ -347,6 +376,8 @@ Egas-clearance/
 │   │   ├── services/           Signed clearance PDF generation, request assembly
 │   │   └── utils/              Async error handling and password policy
 │   └── uploads/                Runtime evidence files; ignored by Git
+├── docs/
+│   └── manuals/                Bilingual user, admin, operational, and technical manuals
 ├── frontend/
 │   └── src/
 │       ├── api/                Authenticated Axios client
@@ -394,8 +425,6 @@ git diff --check
   evaluate secure HTTP-only cookies and CSRF protections.
 - PDF row coordinates are calibrated to the included clearance template and
   may need adjustment if that file changes.
-- WEBP evidence can be uploaded and viewed but is not yet embedded in the
-  generated PDF.
 - Demo credentials and the login-page account picker are intended only for
   development and demonstrations.
 
